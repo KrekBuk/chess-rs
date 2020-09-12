@@ -1,17 +1,27 @@
-use chess_bot::chess::board::{Board, Color, Square};
-use chess_bot::util::board_visualizer::{BoardVisualizer, Config};
-use image::{Rgba, ImageFormat};
 use std::collections::HashMap;
+use image::{ImageFormat, Rgba};
+
+use chess_bot::chess::board::Color;
 use chess_bot::chess::pieces::Type;
-use chess_bot::chess::moves::Extra;
+use chess_bot::util::board_visualizer::{BoardVisualizer, Config};
 
-fn main() {
-    let mut board = Board::new();
-    board.setup_default_board();
+use chess_bot::discord::bot::{start_bot, BotData};
+use chess_bot::system::game::GameManager;
+use serenity::Error;
 
-    board.make_move_if_valid(Square::from_string("E2").unwrap(), Square::from_string("E4").unwrap(), Extra::None).unwrap();
-    board.make_move_if_valid(Square::from_string("D7").unwrap(), Square::from_string("D5").unwrap(), Extra::None).unwrap();
+#[tokio::main]
+async fn main() -> Result<(), Error> {
+    let data = BotData {
+        visualizer: setup_visualizer(),
+        game_manager: GameManager::new(),
+    };
 
+    start_bot(data).await?;
+
+    Ok(())
+}
+
+fn setup_visualizer() -> BoardVisualizer {
     let mut piece_mappings = HashMap::new();
     let mut piece_mappings_white = HashMap::new();
     let mut piece_mappings_black = HashMap::new();
@@ -47,9 +57,8 @@ fn main() {
         pieces_image: Vec::from(include_bytes!("res/pieces.png") as &[u8]),
         pieces_image_format: ImageFormat::Png,
         pieces_mappings: piece_mappings,
-        piece_size: 60
+        piece_size: 60,
     };
 
-    let visualizer = BoardVisualizer::new(config);
-    visualizer.visualize(&board);
+    BoardVisualizer::new(config)
 }

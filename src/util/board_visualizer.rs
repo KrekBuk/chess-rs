@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 
-use image::{ImageBuffer, RgbaImage, Rgba, ImageFormat, Pixel};
-use imageproc::rect::Rect;
+use image::{
+    ColorType, EncodableLayout, ImageBuffer, ImageEncoder, ImageError,
+    ImageFormat, Pixel, Rgba, RgbaImage,
+};
 use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
+use imageproc::rect::Rect;
 use rusttype::{Font, Scale};
 
-use crate::chess::pieces::{Type};
-use crate::chess::board::{Board, Square, Color as PieceColor};
+use crate::chess::board::{Board, Color as PieceColor, Square};
+use crate::chess::pieces::Type;
+use std::io::{Write};
 
 pub type Color = Rgba<u8>;
 
@@ -42,12 +46,17 @@ impl BoardVisualizer {
         Self {
             font: Font::try_from_vec(config.text_font.clone()).unwrap(),
             scale: Scale::uniform(config.text_font_size as f32),
-            piece_image: image::load_from_memory_with_format(&config.pieces_image as &[u8], config.pieces_image_format).unwrap().to_rgba(),
+            piece_image: image::load_from_memory_with_format(
+                &config.pieces_image as &[u8],
+                config.pieces_image_format,
+            )
+            .unwrap()
+            .to_rgba(),
             config,
         }
     }
 
-    pub fn visualize(&self, board: &Board) {
+    pub fn visualize(&self, board: &Board) -> Result<Vec<u8>, ImageError> {
         let mut image: RgbaImage = ImageBuffer::from_fn(
             (self.config.tile_size * 8) as u32,
             (self.config.tile_size * 8 + self.config.bottom_fill_size) as u32,
@@ -60,13 +69,22 @@ impl BoardVisualizer {
 
                 // Tile position in pixels
                 let tile_start_x = (file - 1) as usize * self.config.tile_size;
-                let tile_start_y = (self.config.bottom_fill_size / 2) + (BOARD_SIZE - rank as usize) * self.config.tile_size;
+                let tile_start_y = (self.config.bottom_fill_size / 2)
+                    + (BOARD_SIZE - rank as usize) * self.config.tile_size;
 
                 // Draw tile colors
                 let color = if board.highlighted_squares.contains(&square) {
-                    if square.is_light() { self.config.light_tile_color_highlighted } else { self.config.dark_tile_color_highlighted }
+                    if square.is_light() {
+                        self.config.light_tile_color_highlighted
+                    } else {
+                        self.config.dark_tile_color_highlighted
+                    }
                 } else {
-                    if square.is_light() { self.config.light_tile_color } else { self.config.dark_tile_color }
+                    if square.is_light() {
+                        self.config.light_tile_color
+                    } else {
+                        self.config.dark_tile_color
+                    }
                 };
 
                 let rect = Rect::at(tile_start_x as i32, tile_start_y as i32)
@@ -74,7 +92,11 @@ impl BoardVisualizer {
 
                 draw_filled_rect_mut(&mut image, rect, color);
 
-                let text_color = if square.is_light() { self.config.text_on_light_color } else { self.config.text_on_dark_color };
+                let text_color = if square.is_light() {
+                    self.config.text_on_light_color
+                } else {
+                    self.config.text_on_dark_color
+                };
 
                 if file == 1 {
                     // Draw rank number
@@ -82,7 +104,8 @@ impl BoardVisualizer {
                         &mut image,
                         text_color,
                         (tile_start_x + 1) as u32,
-                        (tile_start_y + self.config.tile_size / 2 - self.config.text_font_size / 2) as u32,
+                        (tile_start_y + self.config.tile_size / 2 - self.config.text_font_size / 2)
+                            as u32,
                         self.scale,
                         &self.font,
                         square.rank_number.to_string().as_str(),
@@ -105,10 +128,10 @@ impl BoardVisualizer {
                     );
                 }
 
-
                 // Draw a piece
                 if let Some(piece) = board.get_piece(square) {
-                    let (piece_x, piece_y) = self.config.pieces_mappings[&piece.color][&piece.piece_type];
+                    let (piece_x, piece_y) =
+                        self.config.pieces_mappings[&piece.color][&piece.piece_type];
                     let padding = (self.config.tile_size - self.config.piece_size) / 2;
 
                     BoardVisualizer::draw_image(
@@ -125,13 +148,34 @@ impl BoardVisualizer {
             }
         }
 
-        image.save("test.png").unwrap();
+        let mut vec = Vec::new();
+        let writer = vec.by_ref();
+
+        image::png::PngEncoder::new(writer).write_image(
+            image.as_bytes(),
+            image.width(),
+            image.height(),
+            ColorType::Rgba8,
+        )?;
+
+        Ok(vec)
     }
 
-    fn draw_image(image: &mut RgbaImage, x: u32, y: u32, image_from: &RgbaImage, from_x: u32, from_y: u32, width: u32, height: u32) {
+    fn draw_image(
+        image: &mut RgbaImage,
+        x: u32,
+        y: u32,
+        image_from: &RgbaImage,
+        from_x: u32,
+        from_y: u32,
+        width: u32,
+        height: u32,
+    ) {
         for shift_x in 0..width {
             for shift_y in 0..height {
-                image.get_pixel_mut(x + shift_x, y + shift_y).blend(image_from.get_pixel(from_x + shift_x, from_y + shift_y));
+                image
+                    .get_pixel_mut(x + shift_x, y + shift_y)
+                    .blend(image_from.get_pixel(from_x + shift_x, from_y + shift_y));
             }
         }
     }

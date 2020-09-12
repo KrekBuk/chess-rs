@@ -1,4 +1,4 @@
-use super::board::{Square, Color};
+use super::board::{Color, Square};
 use super::pieces::Type;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -10,7 +10,7 @@ pub enum MoveFailureReason {
     IllegalPieceMove,
     InCheckAfterTurn,
     NoPreviousPositions,
-    GameEnded
+    GameEnded,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone)]

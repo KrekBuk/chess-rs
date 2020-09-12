@@ -1,10 +1,13 @@
 use super::board::{Board, Color, Square};
-use super::moves::{Move, MoveFailureReason::{self, *}, Extra};
+use super::moves::{
+    Extra, Move,
+    MoveFailureReason::{self, *},
+};
 use super::pieces::Type;
 
-use GameResult::{*};
+use GameResult::*;
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum GameResult {
     Ongoing,
     CheckMate(Color),
@@ -19,23 +22,24 @@ pub enum GameResult {
 
 impl GameResult {
     pub fn get_winner(&self) -> Option<Color> {
-        use GameResult::{*};
+        use GameResult::*;
 
         match self {
-            Ongoing | Stalemated | InsufficientMaterial | ThreefoldRepetition | FiftyMoves | DrawAgreed => None,
+            Ongoing | Stalemated | InsufficientMaterial | ThreefoldRepetition | FiftyMoves
+            | DrawAgreed => None,
             CheckMate(color) | Resignation(color) | OutOfTime(color) => Some(color.get_opposite()),
         }
     }
 }
 
 #[derive(Clone)]
-struct GameState {
-    board: Board,
-    half_move_clock: u32,
-    current_turn: Color,
-    draw_offers: Vec<Color>,
-    takeback_offers: Vec<Color>,
-    board_hash: u64,
+pub struct GameState {
+    pub board: Board,
+    pub half_move_clock: u32,
+    pub current_turn: Color,
+    pub draw_offers: Vec<Color>,
+    pub takeback_offers: Vec<Color>,
+    pub board_hash: u64,
 }
 
 impl GameState {
@@ -52,10 +56,10 @@ impl GameState {
 }
 
 #[derive(Clone)]
-struct Game {
-    state: GameState,
-    state_history: Vec<GameState>,
-    result: Option<GameResult>,
+pub struct Game {
+    pub state: GameState,
+    pub state_history: Vec<GameState>,
+    pub result: Option<GameResult>,
 }
 
 impl Game {
@@ -93,11 +97,16 @@ impl Game {
 
                 Ok(())
             }
-            None => Err(NoPreviousPositions)
+            None => Err(NoPreviousPositions),
         }
     }
 
-    pub fn make_move(&mut self, from: Square, to: Square, extra: Extra) -> Result<Move, MoveFailureReason> {
+    pub fn make_move(
+        &mut self,
+        from: Square,
+        to: Square,
+        extra: Extra,
+    ) -> Result<Move, MoveFailureReason> {
         if self.result.is_some() {
             return Err(GameEnded);
         }
@@ -105,7 +114,7 @@ impl Game {
         // Check if move is valid
         let piece = match self.state.board.get_piece(from) {
             Some(piece) => piece,
-            None => return Err(NoPiece)
+            None => return Err(NoPiece),
         };
 
         if piece.color != self.state.current_turn {
@@ -114,9 +123,7 @@ impl Game {
 
         let mut new_board = self.state.board.clone();
 
-        if let Err(e) = new_board.make_move_if_valid(from, to, extra) {
-            return Err(e);
-        }
+        new_board.make_move_if_valid(from, to, extra)?;
 
         if new_board.is_in_check(self.state.current_turn) {
             return Err(InCheckAfterTurn);
@@ -143,7 +150,12 @@ impl Game {
         }
 
         // check for mate or draw
-        if self.state.board.get_valid_moves_for(self.state.current_turn).is_empty() {
+        if self
+            .state
+            .board
+            .get_valid_moves_for(self.state.current_turn)
+            .is_empty()
+        {
             // current player has no moves
             if self.state.board.is_in_check(self.state.current_turn) {
                 // they are in check so its checkmate
@@ -188,7 +200,6 @@ impl Game {
         Ok(Ongoing)
     }
 
-
     pub fn offer_takeback(&mut self, color: Color) -> Result<bool, MoveFailureReason> {
         if self.result.is_some() {
             return Err(GameEnded);
@@ -222,8 +233,8 @@ impl Game {
     }
 
     pub fn check_for_insufficient_material(&self) -> bool {
-        !self.validate_has_sufficient_material(Color::White) &&
-            !self.validate_has_sufficient_material(Color::Black)
+        !self.validate_has_sufficient_material(Color::White)
+            && !self.validate_has_sufficient_material(Color::Black)
     }
 
     pub fn check_for_threefold_repetition(&self) -> bool {
