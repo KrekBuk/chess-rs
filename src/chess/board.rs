@@ -2,10 +2,15 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 
-use super::moves::{Extra, Move, MoveFailureReason, MoveFailureReason::*};
+use serde_derive::{Deserialize, Serialize};
+
+use super::moves::{Extra, HistoryMove, MoveFailureReason, MoveFailureReason::*, MoveParsingError};
 use super::pieces::{Piece, Type};
 
-#[derive(Eq, PartialEq, Copy, Clone, Hash, Debug)]
+use crate::chess::moves::NewMove;
+use std::str::FromStr;
+
+#[derive(Eq, PartialEq, Copy, Clone, Hash, Debug, Serialize, Deserialize)]
 pub enum Color {
     White,
     Black,
@@ -28,40 +33,11 @@ pub struct Square {
 
 impl Square {
     pub fn new(file_number: u8, rank_number: u8) -> Self {
-        Self {
-            file_number,
-            rank_number,
-        }
+        Self { file_number, rank_number }
     }
 
     pub fn new_if_valid(file_number: u8, rank_number: u8) -> Option<Self> {
         let square = Self::new(file_number, rank_number);
-
-        if !square.is_valid() {
-            return None;
-        }
-
-        Some(square)
-    }
-
-    pub fn from_string(string: &str) -> Option<Self> {
-        if string.len() != 2 {
-            return None;
-        }
-
-        let chars = string.as_bytes();
-        let file_character = chars[0];
-        let rank_character = chars[1];
-
-        if file_character < b'A'
-            || file_character > b'H'
-            || rank_character < b'1'
-            || rank_character > b'8'
-        {
-            return None;
-        }
-
-        let square = Self::new(file_character - b'A' + 1, rank_character - b'1' + 1);
 
         if !square.is_valid() {
             return None;
@@ -75,28 +51,22 @@ impl Square {
     }
 
     pub fn is_light(&self) -> bool {
-        self.file_number % 2 ^ self.rank_number % 2 != 0
+        (self.file_number % 2) ^ (self.rank_number % 2) != 0
     }
 
     pub fn is_valid(&self) -> bool {
-        self.file_number >= 1
-            && self.file_number <= 8
-            && self.rank_number >= 1
-            && self.rank_number <= 8
+        self.file_number >= 1 && self.file_number <= 8 && self.rank_number >= 1 && self.rank_number <= 8
     }
 
     pub fn get_relative(&self, file_relative: i8, rank_relative: i8) -> Self {
-        Self::new(
-            ((self.file_number as i8) + file_relative) as u8,
-            ((self.rank_number as i8) + rank_relative) as u8,
-        )
+        Self::new(((self.file_number as i8) + file_relative) as u8, ((self.rank_number as i8) + rank_relative) as u8)
     }
 
     pub fn get_relatives_until_invalid(&self, file_relative: i8, rank_relative: i8) -> Vec<Self> {
         assert!(file_relative != 0 || rank_relative != 0);
 
         let mut relatives = Vec::new();
-        let mut current: Self = self.clone();
+        let mut current: Self = *self;
 
         loop {
             current = current.get_relative(file_relative, rank_relative);
@@ -119,21 +89,10 @@ impl Square {
         let file_change: i8 = other.file_number as i8 - self.file_number as i8;
         let rank_change: i8 = other.rank_number as i8 - self.rank_number as i8;
 
-        let file_change_reduced = if file_change == 0 {
-            0
-        } else {
-            file_change / file_change.abs()
-        };
-        let rank_change_reduced = if rank_change == 0 {
-            0
-        } else {
-            rank_change / rank_change.abs()
-        };
+        let file_change_reduced = if file_change == 0 { 0 } else { file_change / file_change.abs() };
+        let rank_change_reduced = if rank_change == 0 { 0 } else { rank_change / rank_change.abs() };
 
-        if file_change != 0
-            && rank_change != 0
-            && file_change_reduced.abs() != rank_change_reduced.abs()
-        {
+        if file_change != 0 && rank_change != 0 && file_change_reduced.abs() != rank_change_reduced.abs() {
             return None;
         }
 
@@ -150,6 +109,33 @@ impl Square {
 
     pub fn get_unique_index(&self) -> u8 {
         (self.rank_number - 1) * 8 + (self.file_number - 1)
+    }
+}
+
+impl FromStr for Square {
+    type Err = MoveParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let string = s.to_uppercase();
+        if string.len() != 2 {
+            return Err(MoveParsingError::IncorrectSquareFormat);
+        }
+
+        let chars = string.as_bytes();
+        let file_character = chars[0];
+        let rank_character = chars[1];
+
+        if file_character < b'A' || file_character > b'H' || rank_character < b'1' || rank_character > b'8' {
+            return Err(MoveParsingError::InvalidSquare);
+        }
+
+        let square = Self::new(file_character - b'A' + 1, rank_character - b'1' + 1);
+
+        if !square.is_valid() {
+            return Err(MoveParsingError::InvalidSquare);
+        }
+
+        Ok(square)
     }
 }
 
@@ -211,17 +197,9 @@ impl BoardState {
 
 impl Hash for BoardState {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_u8(BoardState::hash_castling_rights(
-            &self.white_castling_rights,
-        ));
-        state.write_u8(BoardState::hash_castling_rights(
-            &self.black_castling_rights,
-        ));
-        state.write_u8(
-            self.en_passant_square
-                .map(|square| square.get_unique_index())
-                .unwrap_or(64),
-        );
+        state.write_u8(BoardState::hash_castling_rights(&self.white_castling_rights));
+        state.write_u8(BoardState::hash_castling_rights(&self.black_castling_rights));
+        state.write_u8(self.en_passant_square.map(|square| square.get_unique_index()).unwrap_or(64));
 
         for file in 1..9 {
             for rank in 1..9 {
@@ -250,10 +228,7 @@ impl Hash for BoardState {
 
 impl PartialEq for BoardState {
     fn eq(&self, other: &Self) -> bool {
-        if self.white_castling_rights != other.white_castling_rights
-            || self.black_castling_rights != other.black_castling_rights
-            || self.en_passant_square != other.en_passant_square
-        {
+        if self.white_castling_rights != other.white_castling_rights || self.black_castling_rights != other.black_castling_rights || self.en_passant_square != other.en_passant_square {
             return false;
         }
 
@@ -282,27 +257,12 @@ impl PartialEq for BoardState {
 pub struct Board {
     pub highlighted_squares: Vec<Square>,
     pub state: BoardState,
-    pub last_move: Option<Move>,
+    pub last_move: Option<HistoryMove>,
 }
 
 impl Board {
     pub fn new() -> Self {
-        Self {
-            highlighted_squares: Vec::new(),
-            state: BoardState {
-                white_castling_rights: CastlingRights {
-                    short_castle: true,
-                    long_castle: true,
-                },
-                black_castling_rights: CastlingRights {
-                    short_castle: true,
-                    long_castle: true,
-                },
-                en_passant_square: None,
-                pieces: HashMap::with_capacity(64),
-            },
-            last_move: None,
-        }
+        Self::default()
     }
 
     pub fn set_piece(&mut self, piece: Piece) {
@@ -381,7 +341,13 @@ impl Board {
                     continue;
                 }
 
-                if !piece.is_move_valid(self, *valid_move, Extra::MoveCheck) {
+                let move_check = NewMove {
+                    from: piece.location,
+                    to: *valid_move,
+                    extra: Extra::MoveCheck,
+                };
+
+                if !piece.is_move_valid(self, move_check) {
                     continue;
                 }
 
@@ -406,7 +372,33 @@ impl Board {
         false
     }
 
-    pub fn get_valid_moves_for(&self, color: Color) -> Vec<Move> {
+    pub fn get_valid_moves_for_piece(&self, piece: &Piece) -> Vec<HistoryMove> {
+        let mut valid_moves = Vec::new();
+
+        for valid_move in &piece.valid_moves {
+            let mut board = self.clone();
+
+            let move_check = NewMove {
+                from: piece.location,
+                to: *valid_move,
+                extra: Extra::MoveCheck,
+            };
+
+            if board.make_move_if_valid(move_check).is_err() {
+                continue;
+            }
+
+            if board.is_in_check(piece.color) {
+                continue;
+            }
+
+            valid_moves.push(board.last_move.unwrap());
+        }
+
+        valid_moves
+    }
+
+    pub fn get_valid_moves_for(&self, color: Color) -> Vec<HistoryMove> {
         let mut valid_moves = Vec::new();
 
         for (_, piece) in self.state.pieces.iter() {
@@ -414,21 +406,7 @@ impl Board {
                 continue;
             }
 
-            for valid_move in &piece.valid_moves {
-                let mut board = self.clone();
-
-                if let Err(_) =
-                    board.make_move_if_valid(piece.location, *valid_move, Extra::MoveCheck)
-                {
-                    continue;
-                }
-
-                if board.is_in_check(color) {
-                    continue;
-                }
-
-                valid_moves.push(board.last_move.unwrap());
-            }
+            valid_moves.append(&mut self.get_valid_moves_for_piece(piece));
         }
 
         valid_moves
@@ -455,29 +433,20 @@ impl Board {
     pub fn get_material_count(&self, color: Color) -> usize {
         let count = self.get_pieces_count_by_type(color);
 
-        count.get(&Type::Queen).unwrap() * 9
-            + count.get(&Type::Rook).unwrap() * 5
-            + count.get(&Type::Bishop).unwrap() * 3
-            + count.get(&Type::Knight).unwrap() * 3
-            + count.get(&Type::Pawn).unwrap()
+        count.get(&Type::Queen).unwrap() * 9 + count.get(&Type::Rook).unwrap() * 5 + count.get(&Type::Bishop).unwrap() * 3 + count.get(&Type::Knight).unwrap() * 3 + count.get(&Type::Pawn).unwrap()
     }
 
-    pub fn make_move_if_valid(
-        &mut self,
-        from: Square,
-        to: Square,
-        extra: Extra,
-    ) -> Result<(), MoveFailureReason> {
+    pub fn make_move_if_valid(&mut self, m: NewMove) -> Result<(), MoveFailureReason> {
         let piece_color: Color;
         let piece_type: Type;
 
-        let piece = match self.get_piece(from) {
+        let piece = match self.get_piece(m.from) {
             Some(piece) => piece,
             None => return Err(NoPiece),
         };
 
         // Check if move was valid
-        if !piece.is_move_valid(self, to, extra) {
+        if !piece.is_move_valid(self, m) {
             return Err(MoveInvalid);
         }
 
@@ -487,7 +456,7 @@ impl Board {
         let mut was_capture = false;
 
         // Check if this was a capture
-        if let Some(capture) = self.get_piece(to) {
+        if let Some(capture) = self.get_piece(m.to) {
             if capture.color == piece_color {
                 return Err(CannotCaptureOwnPiece);
             }
@@ -496,28 +465,28 @@ impl Board {
         }
 
         // Remove the piece from old location and the captured piece if any
-        self.remove_piece(from);
-        self.remove_piece(to);
+        self.remove_piece(m.from);
+        self.remove_piece(m.to);
 
         // Setup last move
-        self.last_move = Some(Move {
+        self.last_move = Some(HistoryMove {
             piece_color,
             piece_type,
-            from,
-            to,
+            from: m.from,
+            to: m.to,
             capture: was_capture,
-            extra,
+            extra: m.extra,
         });
 
         // Create new piece at the target destination and call after_move
-        let piece = Piece::new(to, piece_color, piece_type);
+        let piece = Piece::new(m.to, piece_color, piece_type);
         self.set_piece(piece.clone());
         piece.after_move(self);
 
-        // Mark highlightes squares
+        // Mark highlighted squares
         self.highlighted_squares.clear();
-        self.highlighted_squares.push(from);
-        self.highlighted_squares.push(to);
+        self.highlighted_squares.push(m.from);
+        self.highlighted_squares.push(m.to);
 
         Ok(())
     }
@@ -525,6 +494,27 @@ impl Board {
     pub fn recalculate_all_pieces_movements(&mut self) {
         for (_, piece) in self.state.pieces.iter_mut() {
             piece.recalculate_valid_moves();
+        }
+    }
+}
+
+impl Default for Board {
+    fn default() -> Self {
+        Self {
+            highlighted_squares: Vec::new(),
+            state: BoardState {
+                white_castling_rights: CastlingRights {
+                    short_castle: true,
+                    long_castle: true,
+                },
+                black_castling_rights: CastlingRights {
+                    short_castle: true,
+                    long_castle: true,
+                },
+                en_passant_square: None,
+                pieces: HashMap::with_capacity(64),
+            },
+            last_move: None,
         }
     }
 }

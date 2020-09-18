@@ -1,21 +1,24 @@
 use crate::chess::board::Color;
 use crate::chess::game::Game as ChessGame;
+
 use serenity::model::id::UserId;
+
 use std::time::{Duration, SystemTime};
+use crate::http::http_server::UserInfo;
 
 type PlayerId = UserId;
 
 pub struct Game {
-    pub white_player_id: PlayerId,
-    pub black_player_id: PlayerId,
+    pub white_player: UserInfo,
+    pub black_player: UserInfo,
     pub chess_game: ChessGame,
 }
 
 impl Game {
     pub fn get_side_of_player(&self, player_id: PlayerId) -> Option<Color> {
-        if self.white_player_id == player_id {
+        if self.white_player.id == player_id {
             Some(Color::White)
-        } else if self.black_player_id == player_id {
+        } else if self.black_player.id == player_id {
             Some(Color::Black)
         } else {
             None
@@ -24,8 +27,8 @@ impl Game {
 
     pub fn get_player_id_by_side(&self, side: Color) -> PlayerId {
         match side {
-            Color::White => self.white_player_id,
-            Color::Black => self.black_player_id,
+            Color::White => self.white_player.id,
+            Color::Black => self.black_player.id,
         }
     }
 }
@@ -57,10 +60,7 @@ pub struct GameManager {
 
 impl GameManager {
     pub fn new() -> Self {
-        Self {
-            games: Vec::new(),
-            invites: Vec::new(),
-        }
+        Self::default()
     }
 
     fn remove_concluded_games(&mut self) {
@@ -71,18 +71,14 @@ impl GameManager {
         self.invites.retain(|x| !x.is_expired());
     }
 
-    pub fn create_game(
-        &mut self,
-        white_player: PlayerId,
-        black_player: PlayerId,
-    ) -> Option<&mut Game> {
-        if self.get_game(white_player).is_some() || self.get_game(black_player).is_some() {
+    pub fn create_game(&mut self, white_player: UserInfo, black_player: UserInfo) -> Option<&mut Game> {
+        if self.get_game(white_player.id).is_some() || self.get_game(black_player.id).is_some() {
             return None;
         }
 
         let game = Game {
-            white_player_id: white_player,
-            black_player_id: black_player,
+            white_player,
+            black_player,
             chess_game: ChessGame::new(),
         };
 
@@ -94,9 +90,7 @@ impl GameManager {
     pub fn get_game(&mut self, player: PlayerId) -> Option<&mut Game> {
         self.remove_concluded_games();
 
-        self.games
-            .iter_mut()
-            .find(|game| game.white_player_id == player || game.black_player_id == player)
+        self.games.iter_mut().find(|game| game.white_player.id == player || game.black_player.id == player)
     }
 
     pub fn invite(&mut self, invitee: PlayerId, inviter: PlayerId) -> &GameInvite {
@@ -106,14 +100,24 @@ impl GameManager {
     }
 
     pub fn get_invite(&self, invitee: PlayerId, inviter: PlayerId) -> Option<&GameInvite> {
-        self.invites.iter().find(|invite| {
-            invite.invitee == invitee && invite.inviter == inviter && !invite.is_expired()
-        })
+        self.invites.iter().find(|invite| invite.invitee == invitee && invite.inviter == inviter && !invite.is_expired())
     }
 
-    pub fn remove_invite(&mut self, invitee: PlayerId, inviter: PlayerId) {
+    pub fn remove_invite(&mut self, invitee: PlayerId, inviter: PlayerId) -> bool {
         self.remove_expired_invites();
-        self.invites
-            .retain(|invite| invite.invitee != invitee || invite.inviter != inviter);
+
+        let len = self.invites.len();
+        self.invites.retain(|invite| invite.invitee != invitee || invite.inviter != inviter);
+
+        len != self.invites.len()
+    }
+}
+
+impl Default for GameManager {
+    fn default() -> Self {
+        Self {
+            games: Vec::new(),
+            invites: Vec::new(),
+        }
     }
 }

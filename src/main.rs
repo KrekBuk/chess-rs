@@ -1,22 +1,42 @@
-use std::collections::HashMap;
+#[macro_use]
+extern crate lazy_static;
+
+pub mod chess;
+pub mod config;
+pub mod discord;
+pub mod http;
+pub mod system;
+pub mod util;
+
+use crate::chess::board::Color;
+use crate::chess::pieces::Type;
+use crate::config::load_config;
+use crate::discord::bot::{start_bot, BotData};
+use crate::system::game::GameManager;
+use crate::util::board_visualizer::{BoardVisualizer, Config};
+
+use crate::http::http_server::start_server;
 use image::{ImageFormat, Rgba};
-
-use chess_bot::chess::board::Color;
-use chess_bot::chess::pieces::Type;
-use chess_bot::util::board_visualizer::{BoardVisualizer, Config};
-
-use chess_bot::discord::bot::{start_bot, BotData};
-use chess_bot::system::game::GameManager;
-use serenity::Error;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let config = load_config().expect("Failed to load config");
+
+    let local = tokio::task::LocalSet::new();
+    let _ = actix_rt::System::run_in_tokio("server", &local);
+
+    let game_manager = Arc::new(RwLock::new(GameManager::new()));
+
     let data = BotData {
         visualizer: setup_visualizer(),
-        game_manager: GameManager::new(),
+        game_manager: game_manager.clone(),
+        prefix: config.discord.prefix.clone(),
     };
 
-    start_bot(data).await?;
+    tokio::try_join!(start_bot(config.discord, data), start_server(config.http, config.oauth2, game_manager.clone())).unwrap();
 
     Ok(())
 }

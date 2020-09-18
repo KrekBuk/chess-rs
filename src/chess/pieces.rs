@@ -1,7 +1,10 @@
 use super::board::{Board, Color, Square};
 use super::moves::Extra;
 
-#[derive(Eq, PartialEq, Copy, Clone, Hash)]
+use crate::chess::moves::NewMove;
+use serde_derive::{Deserialize, Serialize};
+
+#[derive(Eq, PartialEq, Copy, Clone, Hash, Serialize, Deserialize)]
 pub enum Type {
     King,
     Queen,
@@ -57,17 +60,16 @@ impl Piece {
         self.valid_moves.retain(|&m| m.is_valid());
     }
 
-    pub fn is_move_valid(&self, board: &Board, target: Square, extra: Extra) -> bool {
-        if !target.is_valid() {
+    pub fn is_move_valid(&self, board: &Board, m: NewMove) -> bool {
+        if !m.to.is_valid() {
             return false;
         }
 
-        if !self.valid_moves.iter().any(|&m| m == target) {
+        if !self.valid_moves.iter().any(|&valid_move| valid_move == m.to) {
             return false;
         }
 
-        self.get_move_controller()
-            .check_if_move_valid(board, &self, target, extra)
+        self.get_move_controller().check_if_move_valid(board, &self, m)
     }
 
     pub fn after_move(&self, board: &mut Board) {
@@ -77,22 +79,14 @@ impl Piece {
 
 impl PartialEq for Piece {
     fn eq(&self, other: &Self) -> bool {
-        self.location == other.location
-            && self.color == other.color
-            && self.piece_type == other.piece_type
+        self.location == other.location && self.color == other.color && self.piece_type == other.piece_type
     }
 }
 
 pub trait MoveController {
     fn recalculate_valid_moves(&self, piece: &mut Piece);
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        extra: Extra,
-    ) -> bool;
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool;
 
     fn after_move(&self, board: &mut Board);
 }
@@ -103,43 +97,26 @@ impl MoveController for PawnMoveController {
     fn recalculate_valid_moves(&self, piece: &mut Piece) {
         let advance_direction = piece.get_advance_direction();
 
-        piece
-            .valid_moves
-            .push(piece.location.get_relative(0, advance_direction));
-        piece
-            .valid_moves
-            .push(piece.location.get_relative(1, advance_direction));
-        piece
-            .valid_moves
-            .push(piece.location.get_relative(-1, advance_direction));
+        piece.valid_moves.push(piece.location.get_relative(0, advance_direction));
+        piece.valid_moves.push(piece.location.get_relative(1, advance_direction));
+        piece.valid_moves.push(piece.location.get_relative(-1, advance_direction));
 
-        if (piece.location.rank_number == 2 && piece.color == Color::White)
-            || (piece.location.rank_number == 7 && piece.color == Color::Black)
-        {
-            piece
-                .valid_moves
-                .push(piece.location.get_relative(0, advance_direction * 2));
+        if (piece.location.rank_number == 2 && piece.color == Color::White) || (piece.location.rank_number == 7 && piece.color == Color::Black) {
+            piece.valid_moves.push(piece.location.get_relative(0, advance_direction * 2));
         }
     }
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        extra: Extra,
-    ) -> bool {
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
         let advance_direction = piece.get_advance_direction();
         let destination_rank = ((piece.location.rank_number as i8) + advance_direction) as u8;
-        let first_move_destination_rank =
-            ((piece.location.rank_number as i8) + advance_direction * 2) as u8;
+        let first_move_destination_rank = ((piece.location.rank_number as i8) + advance_direction * 2) as u8;
 
-        if piece.location.file_number == target.file_number {
+        if piece.location.file_number == m.to.file_number {
             // Move forward
-            if destination_rank != target.rank_number {
+            if destination_rank != m.to.rank_number {
                 // Not a +1 move, maybe its a first move?
                 if piece.location.rank_number == 2 || piece.location.rank_number == 7 {
-                    if first_move_destination_rank != target.rank_number {
+                    if first_move_destination_rank != m.to.rank_number {
                         return false;
                     }
                 } else {
@@ -147,26 +124,23 @@ impl MoveController for PawnMoveController {
                 }
             }
 
-            if let Some(_) = board.get_piece(target) {
+            if board.get_piece(m.to).is_some() {
                 // Pawns cannot capture forward
                 return false;
             }
-        } else if piece.location.file_number == target.file_number - 1
-            || piece.location.file_number == target.file_number + 1
-        {
+        } else if piece.location.file_number == m.to.file_number - 1 || piece.location.file_number == m.to.file_number + 1 {
             // Capture diagonally
-            if destination_rank != target.rank_number {
+            if destination_rank != m.to.rank_number {
                 // Can only move 1 when capturing
                 return false;
             }
 
-            let mut capture_piece = board.get_piece(target);
+            let mut capture_piece = board.get_piece(m.to);
 
             if let Some(en_passant_square) = board.state.en_passant_square {
-                if en_passant_square == target {
+                if en_passant_square == m.to {
                     // En passant capture
-                    capture_piece =
-                        board.get_piece(Square::new(target.file_number, piece.location.rank_number))
+                    capture_piece = board.get_piece(Square::new(m.to.file_number, piece.location.rank_number))
                 }
             }
 
@@ -184,13 +158,13 @@ impl MoveController for PawnMoveController {
             return false;
         }
 
-        if target.rank_number == 1 || target.rank_number == 8 {
+        if m.to.rank_number == 1 || m.to.rank_number == 8 {
             // Promotion rank
-            if let Extra::MoveCheck = extra {
+            if let Extra::MoveCheck = m.extra {
                 return true;
             }
 
-            if let Extra::Promotion(_) = extra {
+            if let Extra::Promotion(_) = m.extra {
                 return true;
             }
 
@@ -212,23 +186,15 @@ impl MoveController for PawnMoveController {
             // Check if move was en passant
             if let Some(en_passant_square) = board.state.en_passant_square {
                 if en_passant_square == last_move.to {
-                    capture_square = Some(Square::new(
-                        last_move.to.file_number,
-                        piece.location.rank_number,
-                    ));
+                    capture_square = Some(Square::new(last_move.to.file_number, last_move.from.rank_number));
                 }
             }
 
             // Check if move was a first move by 2 squares
-            let first_move_destination_rank =
-                ((piece.location.rank_number as i8) + piece.get_advance_direction() * 2) as u8;
+            let first_move_destination_rank = ((last_move.from.rank_number as i8) + piece.get_advance_direction() * 2) as u8;
 
             if first_move_destination_rank == last_move.to.rank_number {
-                board.state.en_passant_square = Some(
-                    last_move
-                        .from
-                        .get_relative(0, piece.get_advance_direction()),
-                );
+                board.state.en_passant_square = Some(last_move.from.get_relative(0, piece.get_advance_direction()));
             } else {
                 board.state.en_passant_square = None;
             }
@@ -256,45 +222,25 @@ pub struct RookMoveController {}
 
 impl MoveController for RookMoveController {
     fn recalculate_valid_moves(&self, piece: &mut Piece) {
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, 0));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(1, 0));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(0, 1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(0, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, 0));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, 0));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(0, 1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(0, -1));
     }
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        _extra: Extra,
-    ) -> bool {
-        board.is_path_clear(piece.location.find_path_to(&target).unwrap())
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
+        board.is_path_clear(piece.location.find_path_to(&m.to).unwrap())
     }
 
     fn after_move(&self, board: &mut Board) {
         let last_move = board.last_move.unwrap();
 
         if last_move.from.file_number == 8 {
-            board
-                .state
-                .get_castling_rights_mut_for(last_move.piece_color)
-                .short_castle = false;
+            board.state.get_castling_rights_mut_for(last_move.piece_color).short_castle = false;
         }
 
         if last_move.from.file_number == 1 {
-            board
-                .state
-                .get_castling_rights_mut_for(last_move.piece_color)
-                .long_castle = false;
+            board.state.get_castling_rights_mut_for(last_move.piece_color).long_castle = false;
         }
     }
 }
@@ -313,13 +259,7 @@ impl MoveController for KnightMoveController {
         piece.valid_moves.push(piece.location.get_relative(-2, -1));
     }
 
-    fn check_if_move_valid(
-        &self,
-        _board: &Board,
-        _piece: &Piece,
-        _target: Square,
-        _extra: Extra,
-    ) -> bool {
+    fn check_if_move_valid(&self, _board: &Board, _piece: &Piece, _m: NewMove) -> bool {
         true
     }
 
@@ -330,28 +270,14 @@ pub struct BishopMoveController {}
 
 impl MoveController for BishopMoveController {
     fn recalculate_valid_moves(&self, piece: &mut Piece) {
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, -1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(1, -1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, 1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, 1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, 1));
     }
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        _extra: Extra,
-    ) -> bool {
-        board.is_path_clear(piece.location.find_path_to(&target).unwrap())
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
+        board.is_path_clear(piece.location.find_path_to(&m.to).unwrap())
     }
 
     fn after_move(&self, _board: &mut Board) {}
@@ -361,40 +287,18 @@ pub struct QueenMoveController {}
 
 impl MoveController for QueenMoveController {
     fn recalculate_valid_moves(&self, piece: &mut Piece) {
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, 0));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(1, 0));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(0, 1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(0, -1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, -1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(1, -1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, 1));
-        piece
-            .valid_moves
-            .append(&mut piece.location.get_relatives_until_invalid(-1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, 0));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, 0));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(0, 1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(0, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, 1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, -1));
     }
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        _extra: Extra,
-    ) -> bool {
-        board.is_path_clear(piece.location.find_path_to(&target).unwrap())
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
+        board.is_path_clear(piece.location.find_path_to(&m.to).unwrap())
     }
 
     fn after_move(&self, _board: &mut Board) {}
@@ -414,18 +318,12 @@ impl MoveController for KingMoveController {
         piece.valid_moves.push(piece.location.get_relative(1, 1));
     }
 
-    fn check_if_move_valid(
-        &self,
-        board: &Board,
-        piece: &Piece,
-        target: Square,
-        _extra: Extra,
-    ) -> bool {
-        if target.file_number == piece.location.file_number - 2 {
+    fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
+        if m.to.file_number == piece.location.file_number - 2 {
             return self.can_castle_short(board, piece);
         }
 
-        if target.file_number == piece.location.file_number + 2 {
+        if m.to.file_number == piece.location.file_number + 2 {
             return self.can_castle_long(board, piece);
         }
 
@@ -457,9 +355,7 @@ impl MoveController for KingMoveController {
             }
         }
 
-        let mut castling_rights = board
-            .state
-            .get_castling_rights_mut_for(last_move.piece_color);
+        let mut castling_rights = board.state.get_castling_rights_mut_for(last_move.piece_color);
         castling_rights.short_castle = false;
         castling_rights.long_castle = false;
     }
@@ -471,10 +367,7 @@ impl KingMoveController {
             return false;
         }
 
-        if board.is_attacked(
-            Square::new(6, king.location.rank_number),
-            Some(king.color.get_opposite()),
-        ) {
+        if board.is_attacked(Square::new(6, king.location.rank_number), Some(king.color.get_opposite())) {
             // f1 / f8 is attacked
             return false;
         }
@@ -487,10 +380,7 @@ impl KingMoveController {
             return false;
         }
 
-        if board.is_attacked(
-            Square::new(4, king.location.rank_number),
-            Some(king.color.get_opposite()),
-        ) {
+        if board.is_attacked(Square::new(4, king.location.rank_number), Some(king.color.get_opposite())) {
             // d1 / d8 is attacked
             return false;
         }
@@ -499,9 +389,7 @@ impl KingMoveController {
     }
 
     fn validate_can_castle(&self, board: &Board, king: &Piece, rook_location: Square) -> bool {
-        if (king.color == Color::White && king.location.to_string() != "E1")
-            || (king.color == Color::Black && king.location.to_string() != "E8")
-        {
+        if (king.color == Color::White && king.location.to_string() != "E1") || (king.color == Color::Black && king.location.to_string() != "E8") {
             return false;
         }
 

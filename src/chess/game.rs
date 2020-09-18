@@ -1,13 +1,15 @@
-use super::board::{Board, Color, Square};
-use super::moves::{
-    Extra, Move,
-    MoveFailureReason::{self, *},
-};
+use serde_derive::{Deserialize, Serialize};
+
+use super::board::{Board, Color};
+use super::moves::{HistoryMove, MoveFailureReason};
+
 use super::pieces::Type;
 
+use crate::chess::moves::NewMove;
 use GameResult::*;
+use MoveFailureReason::*;
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Hash, Debug, Serialize, Deserialize)]
 pub enum GameResult {
     Ongoing,
     CheckMate(Color),
@@ -25,9 +27,22 @@ impl GameResult {
         use GameResult::*;
 
         match self {
-            Ongoing | Stalemated | InsufficientMaterial | ThreefoldRepetition | FiftyMoves
-            | DrawAgreed => None,
+            Ongoing | Stalemated | InsufficientMaterial | ThreefoldRepetition | FiftyMoves | DrawAgreed => None,
             CheckMate(color) | Resignation(color) | OutOfTime(color) => Some(color.get_opposite()),
+        }
+    }
+
+    pub fn pretty_message(&self) -> String {
+        match self {
+            Ongoing => String::from("The game is still ongoing."),
+            CheckMate(color) => format!("{:?} is checkmated.", color),
+            Resignation(color) => format!("{:?} has resigned.", color),
+            OutOfTime(color) => format!("{:?} has resigned.", color),
+            Stalemated => String::from("Stalemate."),
+            InsufficientMaterial => String::from("Insufficient material. "),
+            ThreefoldRepetition => String::from("Three-fold repetition."),
+            FiftyMoves => String::from("50-move rule violation."),
+            DrawAgreed => String::from("Both players agreed to a draw. "),
         }
     }
 }
@@ -64,14 +79,7 @@ pub struct Game {
 
 impl Game {
     pub fn new() -> Self {
-        let mut new = Self {
-            state: GameState::new(Board::new(), 0, Color::White),
-            state_history: Vec::new(),
-            result: None,
-        };
-
-        new.reset();
-        new
+        Self::default()
     }
 
     pub fn reset(&mut self) {
@@ -101,18 +109,22 @@ impl Game {
         }
     }
 
-    pub fn make_move(
-        &mut self,
-        from: Square,
-        to: Square,
-        extra: Extra,
-    ) -> Result<Move, MoveFailureReason> {
+    pub fn draw(&mut self) -> Result<GameResult, MoveFailureReason> {
+        if self.result.is_some() {
+            return Err(GameEnded);
+        }
+
+        self.result = Some(DrawAgreed);
+        Ok(self.result.unwrap())
+    }
+
+    pub fn make_move(&mut self, m: NewMove) -> Result<HistoryMove, MoveFailureReason> {
         if self.result.is_some() {
             return Err(GameEnded);
         }
 
         // Check if move is valid
-        let piece = match self.state.board.get_piece(from) {
+        let piece = match self.state.board.get_piece(m.from) {
             Some(piece) => piece,
             None => return Err(NoPiece),
         };
@@ -123,7 +135,7 @@ impl Game {
 
         let mut new_board = self.state.board.clone();
 
-        new_board.make_move_if_valid(from, to, extra)?;
+        new_board.make_move_if_valid(m)?;
 
         if new_board.is_in_check(self.state.current_turn) {
             return Err(InCheckAfterTurn);
@@ -150,12 +162,7 @@ impl Game {
         }
 
         // check for mate or draw
-        if self
-            .state
-            .board
-            .get_valid_moves_for(self.state.current_turn)
-            .is_empty()
-        {
+        if self.state.board.get_valid_moves_for(self.state.current_turn).is_empty() {
             // current player has no moves
             if self.state.board.is_in_check(self.state.current_turn) {
                 // they are in check so its checkmate
@@ -193,8 +200,7 @@ impl Game {
         self.state.draw_offers.dedup();
 
         if self.state.draw_offers.len() == 2 {
-            self.result = Some(DrawAgreed);
-            return Ok(self.result.unwrap());
+            return self.draw();
         }
 
         Ok(Ongoing)
@@ -233,8 +239,7 @@ impl Game {
     }
 
     pub fn check_for_insufficient_material(&self) -> bool {
-        !self.validate_has_sufficient_material(Color::White)
-            && !self.validate_has_sufficient_material(Color::Black)
+        !self.validate_has_sufficient_material(Color::White) && !self.validate_has_sufficient_material(Color::Black)
     }
 
     pub fn check_for_threefold_repetition(&self) -> bool {
@@ -255,5 +260,18 @@ impl Game {
         }
 
         positions_count >= 3
+    }
+}
+
+impl Default for Game {
+    fn default() -> Self {
+        let mut new = Self {
+            state: GameState::new(Board::new(), 0, Color::White),
+            state_history: Vec::new(),
+            result: None,
+        };
+
+        new.reset();
+        new
     }
 }
