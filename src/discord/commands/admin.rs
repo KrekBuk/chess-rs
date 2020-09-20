@@ -32,6 +32,7 @@ pub struct Admin;
 #[command]
 #[description = "Start a game"]
 #[min_args(2)]
+#[aliases("create")]
 async fn start(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     let white = args.single::<UserId>()?.to_user(&ctx).await?;
     let black = args.single::<UserId>()?.to_user(&ctx).await?;
