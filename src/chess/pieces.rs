@@ -2,7 +2,7 @@ use super::board::{Board, Color, Square};
 use super::moves::Extra;
 
 use crate::chess::moves::NewMove;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Eq, PartialEq, Copy, Clone, Hash, Serialize, Deserialize)]
 pub enum Type {

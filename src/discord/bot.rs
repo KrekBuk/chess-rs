@@ -1,29 +1,27 @@
-use serenity::client::Client;
-use serenity::model::channel::Message;
-use serenity::model::gateway::Ready;
-use serenity::model::id::{ChannelId, UserId};
-use serenity::prelude::{Context, EventHandler, TypeMapKey};
+use std::collections::HashSet;
+use std::sync::Arc;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+use serenity::async_trait;
 use serenity::framework::standard::{
     help_commands,
     macros::{help, hook},
     Args, CommandGroup, CommandResult, Delimiter, DispatchError, HelpOptions, StandardFramework,
 };
-
-use async_trait::async_trait;
-use regex::Regex;
+use serenity::model::channel::Message;
+use serenity::model::gateway::Ready;
+use serenity::model::id::{ChannelId, UserId};
+use serenity::prelude::{Context, EventHandler, TypeMapKey};
+use serenity::{client::Client, framework::standard::CommandError};
 use tokio::sync::RwLock;
-
-use crate::config::DiscordConfig;
-use crate::system::game::GameManager;
-use crate::util::board_visualizer::BoardVisualizer;
 
 use super::commands::admin::ADMIN_GROUP;
 use super::commands::game::make_move;
 use super::commands::game::GAMECOMMANDS_GROUP;
-
-use std::collections::HashSet;
-use std::sync::Arc;
+use crate::config::DiscordConfig;
+use crate::system::game::GameManager;
+use crate::util::board_visualizer::BoardVisualizer;
 
 struct Handler;
 
@@ -58,6 +56,7 @@ pub async fn start_bot(config: DiscordConfig, data: BotData) -> Result<(), Box<d
                 .on_dispatch_error(dispatch_error)
                 .unrecognised_command(unknown_command)
                 .normal_message(normal_message)
+                .after(command_error_handler)
                 .help(&MY_HELP)
                 .group(&ADMIN_GROUP)
                 .group(&GAMECOMMANDS_GROUP),
@@ -74,20 +73,20 @@ pub async fn start_bot(config: DiscordConfig, data: BotData) -> Result<(), Box<d
 async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError) {
     match error {
         DispatchError::NotEnoughArguments { min, given: _ } => {
-            let _ = msg.reply(&ctx.http, &format!("Not enough arguments. {} required.", min)).await;
+            let _ = msg.reply(&ctx, &format!("Not enough arguments. {} required.", min)).await;
         }
         DispatchError::OnlyForOwners => {
-            let _ = msg.reply(&ctx.http, "Only for owners.").await;
+            let _ = msg.reply(&ctx, "Only for owners.").await;
         }
         _ => {
-            let _ = msg.reply(&ctx.http, format!("Error processing command: {:?}", error)).await;
+            let _ = msg.reply(&ctx, format!("Error processing command: {:?}", error)).await;
         }
     }
 }
 
 #[hook]
 async fn unknown_command(ctx: &Context, msg: &Message, unknown_command_name: &str) {
-    let _ = msg.reply(&ctx.http, format!("Could not find command named '{}'", unknown_command_name)).await;
+    let _ = msg.reply(&ctx, format!("Could not find command named '{}'", unknown_command_name)).await;
 }
 
 #[help]
@@ -98,9 +97,7 @@ async fn my_help(context: &Context, msg: &Message, args: Args, help_options: &'s
 
 #[hook]
 async fn normal_message(ctx: &Context, msg: &Message) {
-    lazy_static! {
-        static ref REGEX: Regex = Regex::new("^([A-H][1-8]){2}$").unwrap();
-    }
+    static REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("^([A-H][1-8]){2}$").unwrap());
 
     let args;
     {
@@ -122,4 +119,11 @@ async fn normal_message(ctx: &Context, msg: &Message) {
     }
 
     let _ = make_move(ctx, msg, args).await;
+}
+
+#[hook]
+async fn command_error_handler(ctx: &Context, msg: &Message, _: &str, error: Result<(), CommandError>) {
+    if let Err(why) = error {
+        msg.reply(ctx, why).await.unwrap();
+    }
 }
