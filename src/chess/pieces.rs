@@ -119,6 +119,11 @@ impl MoveController for PawnMoveController {
                     if first_move_destination_rank != m.to.rank_number {
                         return false;
                     }
+
+                    // Cannot jump over pieces
+                    if board.get_piece(Square::new(piece.location.file_number, destination_rank)).is_some() {
+                        return false;
+                    }
                 } else {
                     return false;
                 }
@@ -294,7 +299,7 @@ impl MoveController for QueenMoveController {
         piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, -1));
         piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, -1));
         piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, 1));
-        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(-1, -1));
+        piece.valid_moves.append(&mut piece.location.get_relatives_until_invalid(1, 1));
     }
 
     fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
@@ -316,14 +321,17 @@ impl MoveController for KingMoveController {
         piece.valid_moves.push(piece.location.get_relative(1, -1));
         piece.valid_moves.push(piece.location.get_relative(1, 0));
         piece.valid_moves.push(piece.location.get_relative(1, 1));
+
+        piece.valid_moves.push(piece.location.get_relative(-2, 0));
+        piece.valid_moves.push(piece.location.get_relative(2, 0));
     }
 
     fn check_if_move_valid(&self, board: &Board, piece: &Piece, m: NewMove) -> bool {
-        if m.to.file_number == piece.location.file_number - 2 {
+        if m.to.file_number as i8 == (piece.location.file_number as i8) + 2 {
             return self.can_castle_short(board, piece);
         }
 
-        if m.to.file_number == piece.location.file_number + 2 {
+        if m.to.file_number as i8 == (piece.location.file_number as i8) - 2 {
             return self.can_castle_long(board, piece);
         }
 
@@ -372,7 +380,7 @@ impl KingMoveController {
             return false;
         }
 
-        self.validate_can_castle(board, king, Square::new(1, king.location.rank_number))
+        self.validate_can_castle(board, king, Square::new(8, king.location.rank_number))
     }
 
     pub fn can_castle_long(&self, board: &Board, king: &Piece) -> bool {

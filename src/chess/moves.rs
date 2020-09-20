@@ -50,7 +50,11 @@ impl FromStr for NewMove {
         let to = Square::from_str(&s[2..4].to_uppercase())?;
         // TODO: Extra
 
-        Ok(NewMove { from, to, extra: Extra::None })
+        Ok(NewMove {
+            from,
+            to,
+            extra: Extra::Promotion(Type::Queen),
+        })
     }
 }
 
