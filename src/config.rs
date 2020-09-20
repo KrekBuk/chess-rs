@@ -14,11 +14,7 @@ pub struct DiscordConfig {
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HttpConfig {
     pub address: String,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct WebSocketConfig {
-    pub address: String,
+    pub frontend_address: String,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -32,7 +28,6 @@ pub struct OAuth2Config {
 pub struct Config {
     pub discord: DiscordConfig,
     pub http: HttpConfig,
-    pub websocket: WebSocketConfig,
     pub oauth2: OAuth2Config,
 }
 
@@ -62,9 +57,7 @@ impl Default for Config {
             },
             http: HttpConfig {
                 address: String::from("127.0.0.1:3000"),
-            },
-            websocket: WebSocketConfig {
-                address: String::from("127.0.0.1:3001"),
+                frontend_address: String::from("http://127.0.0.1"),
             },
             oauth2: OAuth2Config {
                 client_id: String::from("CHANGEME"),

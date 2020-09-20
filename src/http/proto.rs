@@ -145,7 +145,11 @@ fn handle_make_move(user: &UserInfo, value: &Value, game: &mut Option<&mut Game>
             let from = parse_square(value.get("from"))?;
             let to = parse_square(value.get("to"))?;
 
-            let _ = game.chess_game.make_move(NewMove { from, to, extra: Extra::None });
+            let _ = game.chess_game.make_move(NewMove {
+                from,
+                to,
+                extra: Extra::Promotion(Type::Queen),
+            });
 
             Ok(())
         }

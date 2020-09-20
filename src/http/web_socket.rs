@@ -12,17 +12,37 @@ use super::proto::{Handler, ProcessingError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+pub struct UnauthorizedWebSocketSession {}
+
+impl Actor for UnauthorizedWebSocketSession {
+    type Context = ws::WebsocketContext<Self>;
+
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
+    }
+
+    fn stopping(&mut self, _: &mut Self::Context) -> Running {
+        Running::Stop
+    }
+}
+
+impl Default for UnauthorizedWebSocketSession {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct WebSocketSession {
     pub game_manager: Arc<RwLock<GameManager>>,
-    pub info: UserInfo,
+    pub info: Option<UserInfo>,
     pub heartbeat: Instant,
 }
 
 impl WebSocketSession {
-    pub fn new(info: UserInfo, game_manager: Arc<RwLock<GameManager>>) -> Self {
+    pub fn new(info: Option<UserInfo>, game_manager: Arc<RwLock<GameManager>>) -> Self {
         Self {
             game_manager,
             info,
@@ -49,7 +69,7 @@ impl WebSocketSession {
 #[async_trait]
 impl Handler for WebSocketSession {
     async fn fetch_user_info(&mut self) -> UserInfo {
-        self.info.clone()
+        self.info.as_ref().unwrap().clone()
     }
 
     async fn get_game_manager<'a>(&'a mut self) -> RwLockWriteGuard<'a, GameManager> {
@@ -62,6 +82,11 @@ impl Actor for WebSocketSession {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         self.do_heartbeat(ctx);
+
+        if self.info.is_none() {
+            ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
+            return;
+        }
     }
 
     fn stopping(&mut self, _: &mut Self::Context) -> Running {
@@ -88,22 +113,28 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
             ws::Message::Pong(_) => {
                 self.heartbeat = Instant::now();
             }
-            ws::Message::Text(text) => match futures::executor::block_on(self.handle_packet(text)) {
-                Ok(str) => {
-                    ctx.text(str);
+            ws::Message::Text(text) => {
+                if self.info.is_none() {
+                    ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
+                    return;
                 }
-                Err(e) => match e {
-                    ProcessingError::InvalidProtocol => {
-                        ctx.close(Some(CloseReason::from(CloseCode::Unsupported)));
+
+                match futures::executor::block_on(self.handle_packet(text)) {
+                    Ok(str) => {
+                        ctx.text(str);
                     }
-                    ProcessingError::NoOutput => {}
-                },
-            },
+                    Err(e) => match e {
+                        ProcessingError::InvalidProtocol => {
+                            ctx.close(Some(CloseReason::from(CloseCode::Unsupported)));
+                        }
+                        ProcessingError::NoOutput => {}
+                    },
+                }
+            }
             ws::Message::Binary(_) => {
                 ctx.close(Some(CloseReason::from(CloseCode::Unsupported)));
             }
-            ws::Message::Close(reason) => {
-                ctx.close(reason);
+            ws::Message::Close(_) => {
                 ctx.stop();
             }
             ws::Message::Continuation(_) => {

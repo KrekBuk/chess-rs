@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use actix_cors::Cors;
 use actix_session::{CookieSession, Session};
+use actix_web::cookie::SameSite;
 use actix_web::{get, http::header, web, App, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
 use oauth2::basic::BasicClient;
@@ -12,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serenity::model::id::UserId;
 use tokio::sync::RwLock;
 
+use super::auth_manager::AuthenticationManager;
 use super::web_socket::WebSocketSession;
 use crate::config::{HttpConfig, OAuth2Config};
 use crate::system::game::GameManager;
@@ -19,10 +22,15 @@ use crate::system::game::GameManager;
 pub struct AppState {
     pub oauth2_client: BasicClient,
     pub auth_url: Url,
+    pub frontend_url: String,
     pub game_manager: Arc<RwLock<GameManager>>,
+    pub auth_manager: Arc<RwLock<AuthenticationManager>>,
 }
 
 pub async fn start_server(http_config: HttpConfig, oauth2_config: OAuth2Config, game_manager: Arc<RwLock<GameManager>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let auth_manager = Arc::new(RwLock::new(AuthenticationManager::new()));
+    let frontend_address = http_config.frontend_address.clone();
+
     HttpServer::new(move || {
         let client = BasicClient::new(
             ClientId::new(oauth2_config.client_id.clone()),
@@ -37,14 +45,27 @@ pub async fn start_server(http_config: HttpConfig, oauth2_config: OAuth2Config, 
             .data(AppState {
                 oauth2_client: client,
                 auth_url,
+                frontend_url: frontend_address.clone(),
                 game_manager: game_manager.clone(),
+                auth_manager: auth_manager.clone(),
             })
-            .wrap(CookieSession::private(&[0; 32]).secure(false))
+            .wrap(
+                Cors::new()
+                    .allowed_origin(&frontend_address)
+                    .allowed_methods(vec!["GET"])
+                    .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
+                    .allowed_header(header::CONTENT_TYPE)
+                    .supports_credentials()
+                    .max_age(3600)
+                    .finish(),
+            )
+            .wrap(CookieSession::private(&[0; 32]).secure(false).same_site(SameSite::Lax))
             .service(login)
             .service(auth)
             .service(logout)
             .service(info)
-            .service(web::resource("/socket").to(socket))
+            .service(get_token)
+            .service(socket)
     })
     .bind(http_config.address.clone())?
     .run()
@@ -78,7 +99,7 @@ async fn auth(session: Session, data: web::Data<AppState>, params: web::Query<Au
 
     session.set("user", user_info).unwrap();
 
-    HttpResponse::TemporaryRedirect().header(header::LOCATION, "/info").finish()
+    HttpResponse::TemporaryRedirect().header(header::LOCATION, "/get_token").finish()
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -128,13 +149,33 @@ async fn info(session: Session) -> HttpResponse {
     HttpResponse::Ok().json(user_info)
 }
 
-async fn socket(req: HttpRequest, stream: web::Payload, data: web::Data<AppState>, session: Session) -> Result<HttpResponse, actix_web::error::Error> {
+#[get("/get_token")]
+async fn get_token(session: Session, data: web::Data<AppState>) -> HttpResponse {
     let user_info = match session.get::<UserInfo>("user").unwrap() {
         Some(user_info) => user_info,
         None => {
-            return Ok(HttpResponse::Forbidden().finish());
+            return HttpResponse::TemporaryRedirect().header(header::LOCATION, "/login").finish();
         }
     };
 
-    ws::start(WebSocketSession::new(user_info, data.game_manager.clone()), &req, stream)
+    let mut auth_manager = data.auth_manager.write().await;
+    let token = auth_manager.get_or_generate_token_for_user(user_info);
+
+    HttpResponse::TemporaryRedirect().header(header::LOCATION, format!("{}?token={}", data.frontend_url, token)).finish()
+}
+
+#[derive(Deserialize)]
+pub struct WebSocketQuery {
+    token: String,
+}
+
+#[get("/socket")]
+async fn socket(query: web::Query<WebSocketQuery>, req: HttpRequest, stream: web::Payload, data: web::Data<AppState>) -> Result<HttpResponse, actix_web::error::Error> {
+    let auth_manager = data.auth_manager.read().await;
+
+    ws::start(
+        WebSocketSession::new(auth_manager.get_for_token(query.token.clone()).ok().cloned(), data.game_manager.clone()),
+        &req,
+        stream,
+    )
 }
