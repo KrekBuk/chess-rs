@@ -7,10 +7,20 @@ use serenity::model::id::UserId;
 use serenity::model::misc::Mentionable;
 use serenity::prelude::Context;
 
-use crate::chess::moves::NewMove;
+use super::GeneralError;
 use crate::discord::bot::BotData;
 use crate::discord::commands::game::send_board;
-use crate::http::http_server::UserInfo;
+use crate::{chess::moves::NewMove, http::http_server::UserInfo};
+
+#[derive(Error, Debug)]
+pub enum AdminCommandError {
+    #[error("Failed to resign.")]
+    FailedToResign,
+    #[error("Failed to make a draw.")]
+    FailedToDraw,
+    #[error("Failed to takeback a move.")]
+    FailedToTakeback,
+}
 
 #[group]
 #[prefixes("admin")]
@@ -23,28 +33,22 @@ pub struct Admin;
 #[description = "Start a game"]
 #[min_args(2)]
 async fn start(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
-    let white = args.single::<UserId>()?.to_user(&ctx.http).await?;
-    let black = args.single::<UserId>()?.to_user(&ctx.http).await?;
+    let white = args.single::<UserId>()?.to_user(&ctx).await?;
+    let black = args.single::<UserId>()?.to_user(&ctx).await?;
 
     let mut data = ctx.data.write().await;
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    match game_manager.create_game(UserInfo::from(&white), UserInfo::from(&black)) {
-        Some(game) => {
-            send_board(
-                ctx,
-                msg.channel_id,
-                game,
-                &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-                format!("{}, {}, the game has started!", white, black),
-            )
-            .await?;
-        }
-        None => {
-            msg.reply(&ctx.http, "Failed to create a game, maybe you're already in one?").await?;
-        }
-    };
+    let game = game_manager.create_game(UserInfo::from(&white), UserInfo::from(&black)).ok_or(GeneralError::FailedToCreateGame)?;
+    send_board(
+        ctx,
+        msg.channel_id,
+        game,
+        &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
+        format!("{}, {}, the game has started!", white, black),
+    )
+    .await?;
 
     Ok(())
 }
@@ -59,30 +63,18 @@ async fn force_resign(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    let game = match game_manager.get_game(player) {
-        Some(game) => game,
-        None => {
-            msg.reply(&ctx.http, "This player is not in a game.").await?;
+    let game = game_manager.get_game(player).ok_or(GeneralError::PlayerNotInGame)?;
 
-            return Ok(());
-        }
-    };
+    game.chess_game.resign(game.get_side_of_player(player).unwrap()).map_err(|_| GeneralError::FailedToResign)?;
 
-    match game.chess_game.resign(game.get_side_of_player(player).unwrap()) {
-        Ok(_) => {
-            send_board(
-                ctx,
-                msg.channel_id,
-                game,
-                &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-                String::from("The game was forcefully resigned. "),
-            )
-            .await?;
-        }
-        Err(_) => {
-            msg.reply(&ctx.http, "Failed to resign. ").await?;
-        }
-    }
+    send_board(
+        ctx,
+        msg.channel_id,
+        game,
+        &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
+        String::from("The game was forcefully resigned. "),
+    )
+    .await?;
 
     Ok(())
 }
@@ -97,30 +89,18 @@ async fn force_draw(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    let game = match game_manager.get_game(player) {
-        Some(game) => game,
-        None => {
-            msg.reply(&ctx.http, "This player is not in a game.").await?;
+    let game = game_manager.get_game(player).ok_or(GeneralError::PlayerNotInGame)?;
 
-            return Ok(());
-        }
-    };
+    game.chess_game.draw().map_err(|_| AdminCommandError::FailedToDraw)?;
 
-    match game.chess_game.draw() {
-        Ok(_) => {
-            send_board(
-                ctx,
-                msg.channel_id,
-                game,
-                &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-                String::from("The game was forcefully drawn. "),
-            )
-            .await?;
-        }
-        Err(_) => {
-            msg.reply(&ctx.http, "Failed to make a draw. ").await?;
-        }
-    }
+    send_board(
+        ctx,
+        msg.channel_id,
+        game,
+        &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
+        String::from("The game was forcefully drawn. "),
+    )
+    .await?;
 
     Ok(())
 }
@@ -135,30 +115,17 @@ async fn force_takeback(ctx: &Context, msg: &Message, mut args: Args) -> Command
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    let game = match game_manager.get_game(player) {
-        Some(game) => game,
-        None => {
-            msg.reply(&ctx.http, "This player is not in a game.").await?;
+    let game = game_manager.get_game(player).ok_or(GeneralError::PlayerNotInGame)?;
 
-            return Ok(());
-        }
-    };
-
-    match game.chess_game.takeback_move() {
-        Ok(_) => {
-            send_board(
-                ctx,
-                msg.channel_id,
-                game,
-                &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-                format!("The move was taken back. Your turn {} ", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
-            )
-            .await?;
-        }
-        Err(_) => {
-            msg.reply(&ctx.http, "Failed to takeback a move. ").await?;
-        }
-    }
+    game.chess_game.takeback_move().map_err(|_| AdminCommandError::FailedToTakeback)?;
+    send_board(
+        ctx,
+        msg.channel_id,
+        game,
+        &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
+        format!("The move was taken back. Your turn {} ", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
+    )
+    .await?;
 
     Ok(())
 }
@@ -168,36 +135,23 @@ async fn force_takeback(ctx: &Context, msg: &Message, mut args: Args) -> Command
 #[min_args(2)]
 async fn force_move(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     let player = args.single::<UserId>()?;
-    let move_ = args.single::<NewMove>()?;
+    let new_move = args.single::<NewMove>()?;
 
     let mut data = ctx.data.write().await;
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    let game = match game_manager.get_game(player) {
-        Some(game) => game,
-        None => {
-            msg.reply(&ctx.http, "This player is not in a game.").await?;
+    let game = game_manager.get_game(player).ok_or(GeneralError::PlayerNotInGame)?;
 
-            return Ok(());
-        }
-    };
-
-    match game.chess_game.make_move(move_) {
-        Ok(_) => {
-            send_board(
-                ctx,
-                msg.channel_id,
-                game,
-                &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-                format!("Your move {}", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
-            )
-            .await?;
-        }
-        Err(e) => {
-            msg.reply(&ctx.http, format!("Invalid move: {:?}", e)).await?;
-        }
-    }
+    game.chess_game.make_move(new_move).map_err(GeneralError::FailedToMove)?;
+    send_board(
+        ctx,
+        msg.channel_id,
+        game,
+        &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
+        format!("Your move {}", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
+    )
+    .await?;
 
     Ok(())
 }

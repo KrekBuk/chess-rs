@@ -1,20 +1,20 @@
+use std::sync::Arc;
+
 use actix_session::{CookieSession, Session};
 use actix_web::{get, http::header, web, App, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
-use http::{HeaderMap, Method};
 use oauth2::basic::BasicClient;
+use oauth2::http::{self, HeaderMap, Method};
 use oauth2::reqwest::async_http_client;
+use oauth2::url::Url;
 use oauth2::{AccessToken, AsyncCodeTokenRequest, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+use serenity::model::id::UserId;
 use tokio::sync::RwLock;
-use url::Url;
 
 use super::web_socket::WebSocketSession;
 use crate::config::{HttpConfig, OAuth2Config};
 use crate::system::game::GameManager;
-
-use std::sync::Arc;
-use serenity::model::id::UserId;
 
 pub struct AppState {
     pub oauth2_client: BasicClient,

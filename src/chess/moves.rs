@@ -1,19 +1,26 @@
 use super::board::{Color, Square};
 use super::pieces::Type;
 
-use serenity::static_assertions::_core::fmt::Formatter;
-use std::fmt::Display;
+use std::fmt::{Display, Formatter};
 use std::str::FromStr;
 
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug, Error)]
 pub enum MoveFailureReason {
+    #[error("No piece")]
     NoPiece,
+    #[error("Invalid move")]
     MoveInvalid,
+    #[error("You cannot capture your own piece")]
     CannotCaptureOwnPiece,
+    #[error("It is not your piece")]
     NotYourPiece,
+    #[error("Illegal piece move")]
     IllegalPieceMove,
+    #[error("In check after turn")]
     InCheckAfterTurn,
+    #[error("No previous positions")]
     NoPreviousPositions,
+    #[error("Game ended")]
     GameEnded,
 }
 

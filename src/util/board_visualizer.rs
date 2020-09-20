@@ -21,9 +21,9 @@ pub struct Config {
     pub dark_tile_color_highlighted: Color,
     pub text_on_light_color: Color,
     pub text_on_dark_color: Color,
-    pub text_font: Vec<u8>,
+    pub text_font: &'static [u8],
     pub text_font_size: usize,
-    pub pieces_image: Vec<u8>,
+    pub pieces_image: &'static [u8],
     pub pieces_image_format: ImageFormat,
     pub pieces_mappings: HashMap<PieceColor, HashMap<Type, (u32, u32)>>,
     pub piece_size: usize,
@@ -41,7 +41,7 @@ const BOARD_SIZE: usize = 8;
 impl BoardVisualizer {
     pub fn new(config: Config) -> Self {
         Self {
-            font: Font::try_from_vec(config.text_font.clone()).unwrap(),
+            font: Font::try_from_bytes(config.text_font).unwrap(),
             scale: Scale::uniform(config.text_font_size as f32),
             piece_image: image::load_from_memory_with_format(&config.pieces_image as &[u8], config.pieces_image_format).unwrap().to_rgba(),
             config,

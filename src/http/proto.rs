@@ -1,6 +1,6 @@
-use async_trait::async_trait;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serenity::async_trait;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::system::game::GameManager;

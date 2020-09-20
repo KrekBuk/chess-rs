@@ -1,5 +1,5 @@
 #[macro_use]
-extern crate lazy_static;
+extern crate thiserror;
 
 pub mod chess;
 pub mod config;
@@ -8,25 +8,26 @@ pub mod http;
 pub mod system;
 pub mod util;
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use image::{ImageFormat, Rgba};
+use tokio::sync::RwLock;
+
 use crate::chess::board::Color;
 use crate::chess::pieces::Type;
 use crate::config::load_config;
 use crate::discord::bot::{start_bot, BotData};
+use crate::http::http_server::start_server;
 use crate::system::game::GameManager;
 use crate::util::board_visualizer::{BoardVisualizer, Config};
-
-use crate::http::http_server::start_server;
-use image::{ImageFormat, Rgba};
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = load_config().expect("Failed to load config");
 
     let local = tokio::task::LocalSet::new();
-    let _ = actix_rt::System::run_in_tokio("server", &local);
+    let _ = actix_web::rt::System::run_in_tokio("server", &local);
 
     let game_manager = Arc::new(RwLock::new(GameManager::new()));
 
@@ -72,9 +73,9 @@ fn setup_visualizer() -> BoardVisualizer {
         dark_tile_color_highlighted: Rgba([0x52, 0x55, 0x5b, 0xFF]),
         text_on_light_color: Rgba([0xFF, 0xFF, 0xFF, 0xFF]),
         text_on_dark_color: Rgba([0xFF, 0xFF, 0xFF, 0xFF]),
-        text_font: Vec::from(include_bytes!("res/DejaVuSans.ttf") as &[u8]),
+        text_font: include_bytes!("res/DejaVuSans.ttf") as &[u8],
         text_font_size: 20,
-        pieces_image: Vec::from(include_bytes!("res/pieces.png") as &[u8]),
+        pieces_image: include_bytes!("res/pieces.png") as &[u8],
         pieces_image_format: ImageFormat::Png,
         pieces_mappings: piece_mappings,
         piece_size: 60,

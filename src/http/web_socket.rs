@@ -1,7 +1,7 @@
 use actix::{Actor, ActorContext, AsyncContext, Running, StreamHandler};
 use actix_web_actors::ws;
 use actix_web_actors::ws::{CloseCode, CloseReason};
-use async_trait::async_trait;
+use serenity::async_trait;
 use tokio::sync::{RwLock, RwLockWriteGuard};
 
 use crate::http::http_server::UserInfo;

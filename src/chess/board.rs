@@ -2,7 +2,7 @@ use std::collections::{hash_map::DefaultHasher, HashMap};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::moves::{Extra, HistoryMove, MoveFailureReason, MoveFailureReason::*, MoveParsingError};
 use super::pieces::{Piece, Type};

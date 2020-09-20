@@ -1,9 +1,9 @@
-use crate::chess::board::Color;
-use crate::chess::game::Game as ChessGame;
+use std::time::{Duration, SystemTime};
 
 use serenity::model::id::UserId;
 
-use std::time::{Duration, SystemTime};
+use crate::chess::board::Color;
+use crate::chess::game::Game as ChessGame;
 use crate::http::http_server::UserInfo;
 
 type PlayerId = UserId;
