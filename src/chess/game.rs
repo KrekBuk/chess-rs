@@ -1,11 +1,18 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 use super::board::{Board, Color};
 use super::moves::{HistoryMove, MoveFailureReason};
-
 use super::pieces::Type;
 
 use crate::chess::moves::NewMove;
+use crate::system::game::GameManager;
+
 use GameResult::*;
 use MoveFailureReason::*;
 
@@ -70,11 +77,12 @@ impl GameState {
     }
 }
 
-#[derive(Clone)]
 pub struct Game {
+    pub manager: Option<Arc<RwLock<GameManager>>>,
     pub state: GameState,
     pub state_history: Vec<GameState>,
     pub result: Option<GameResult>,
+    pub dirty: AtomicBool,
 }
 
 impl Game {
@@ -91,6 +99,7 @@ impl Game {
 
         self.state_history.clear();
         self.result = None;
+        self.state_changed();
     }
 
     pub fn takeback_move(&mut self) -> Result<(), MoveFailureReason> {
@@ -103,6 +112,7 @@ impl Game {
                 self.state = state;
                 self.state.board.recalculate_all_pieces_movements();
 
+                self.state_changed();
                 Ok(())
             }
             None => Err(NoPreviousPositions),
@@ -115,6 +125,7 @@ impl Game {
         }
 
         self.result = Some(DrawAgreed);
+        self.state_changed();
         Ok(self.result.unwrap())
     }
 
@@ -179,6 +190,7 @@ impl Game {
             self.result = Some(FiftyMoves);
         }
 
+        self.state_changed();
         Ok(self.state.board.last_move.unwrap())
     }
 
@@ -188,6 +200,7 @@ impl Game {
         }
 
         self.result = Some(Resignation(color));
+        self.state_changed();
         Ok(self.result.unwrap())
     }
 
@@ -203,6 +216,7 @@ impl Game {
             return self.draw();
         }
 
+        self.state_changed();
         Ok(Ongoing)
     }
 
@@ -219,6 +233,7 @@ impl Game {
             return Ok(true);
         }
 
+        self.state_changed();
         Ok(false)
     }
 
@@ -261,6 +276,29 @@ impl Game {
 
         positions_count >= 3
     }
+
+    pub fn state_changed(&mut self) {
+        self.dirty.store(true, Ordering::Relaxed);
+
+        if let Some(manager) = self.manager.clone() {
+            tokio::spawn(async move {
+                let mut manager = manager.write().await;
+                manager.notify_change();
+            });
+        }
+    }
+
+    pub fn get_and_clear_dirty_state(&mut self) -> bool {
+        let dirty = self.dirty.load(Ordering::Relaxed);
+
+        if !dirty {
+            return false;
+        }
+
+        self.dirty.store(false, Ordering::Relaxed);
+
+        true
+    }
 }
 
 impl Default for Game {
@@ -269,6 +307,8 @@ impl Default for Game {
             state: GameState::new(Board::new(), 0, Color::White),
             state_history: Vec::new(),
             result: None,
+            manager: None,
+            dirty: AtomicBool::new(true),
         };
 
         new.reset();

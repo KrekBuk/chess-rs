@@ -47,7 +47,7 @@ async fn start(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         msg.channel_id,
         game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-        format!("{}, {}, the game has started!", white, black),
+        format!("{}, {}, the game has started! \nYou can play at {}", white, black, data.play_url),
     )
     .await?;
 

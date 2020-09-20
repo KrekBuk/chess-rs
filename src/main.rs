@@ -30,11 +30,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let _ = actix_web::rt::System::run_in_tokio("server", &local);
 
     let game_manager = Arc::new(RwLock::new(GameManager::new()));
+    game_manager.write().await.manage_games(game_manager.clone());
 
     let data = BotData {
         visualizer: setup_visualizer(),
         game_manager: game_manager.clone(),
         prefix: config.discord.prefix.clone(),
+        play_url: config.http.frontend_address.clone(),
     };
 
     tokio::try_join!(start_bot(config.discord, data), start_server(config.http, config.oauth2, game_manager.clone())).unwrap();

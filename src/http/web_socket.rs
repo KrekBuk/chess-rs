@@ -1,4 +1,4 @@
-use actix::{Actor, ActorContext, AsyncContext, Running, StreamHandler};
+use actix::{Actor, ActorContext, AsyncContext, Handler as ActixHandler, Message, Running, StreamHandler};
 use actix_web_actors::ws;
 use actix_web_actors::ws::{CloseCode, CloseReason};
 use serenity::async_trait;
@@ -9,6 +9,7 @@ use crate::system::game::GameManager;
 
 use super::proto::{Handler, ProcessingError};
 
+use serenity::model::id::UserId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -64,6 +65,10 @@ impl WebSocketSession {
     pub async fn handle_packet(&mut self, text: String) -> Result<String, ProcessingError> {
         <Self as Handler>::handle(self, text).await
     }
+
+    fn block_for_manager(&self) -> RwLockWriteGuard<'_, GameManager> {
+        futures::executor::block_on(self.game_manager.write())
+    }
 }
 
 #[async_trait]
@@ -86,10 +91,14 @@ impl Actor for WebSocketSession {
         if self.info.is_none() {
             ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
             return;
-        }
+        };
+
+        self.block_for_manager().register_socket(ctx.address());
     }
 
-    fn stopping(&mut self, _: &mut Self::Context) -> Running {
+    fn stopping(&mut self, ctx: &mut Self::Context) -> Running {
+        self.block_for_manager().unregister_socket(ctx.address());
+
         Running::Stop
     }
 }
@@ -141,6 +150,51 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WebSocketSession 
                 ctx.stop();
             }
             ws::Message::Nop => (),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct UpdateGameStateMessage {
+    pub viewer_list: Vec<UserId>,
+}
+
+impl Message for UpdateGameStateMessage {
+    type Result = ();
+}
+
+impl ActixHandler<UpdateGameStateMessage> for WebSocketSession {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateGameStateMessage, ctx: &mut Self::Context) -> Self::Result {
+        match &self.info {
+            Some(info) => {
+                if !msg.viewer_list.contains(&info.id) {
+                    return;
+                }
+            }
+            None => {
+                return;
+            }
+        }
+
+        static FAKE_PACKET: &'static str = "{\"type\":\"get_state\"}";
+
+        if self.info.is_none() {
+            ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
+            return;
+        }
+
+        match futures::executor::block_on(self.handle_packet(String::from(FAKE_PACKET))) {
+            Ok(str) => {
+                ctx.text(str);
+            }
+            Err(e) => match e {
+                ProcessingError::InvalidProtocol => {
+                    ctx.close(Some(CloseReason::from(CloseCode::Unsupported)));
+                }
+                ProcessingError::NoOutput => {}
+            },
         }
     }
 }

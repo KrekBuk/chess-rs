@@ -115,7 +115,7 @@ async fn accept(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         msg.channel_id,
         game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
-        format!("{}, {}, the game has started!", msg.author.id.mention(), mention.mention()),
+        format!("{}, {}, the game has started! \nYou can play at {}", msg.author.id.mention(), mention.mention(), data.play_url),
     )
     .await?;
 

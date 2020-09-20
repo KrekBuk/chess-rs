@@ -36,6 +36,7 @@ pub struct BotData {
     pub visualizer: BoardVisualizer,
     pub game_manager: Arc<RwLock<GameManager>>,
     pub prefix: String,
+    pub play_url: String,
 }
 
 impl TypeMapKey for BotData {

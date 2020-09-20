@@ -1,10 +1,13 @@
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use serenity::model::id::UserId;
+use tokio::sync::RwLock;
 
 use crate::chess::board::Color;
 use crate::chess::game::Game as ChessGame;
 use crate::http::http_server::UserInfo;
+use crate::http::web_socket::{UpdateGameStateMessage, WebSocketSession};
 
 type PlayerId = UserId;
 
@@ -56,6 +59,8 @@ impl GameInvite {
 pub struct GameManager {
     games: Vec<Game>,
     invites: Vec<GameInvite>,
+    self_ref: Option<Arc<RwLock<GameManager>>>,
+    web_sockets: Vec<actix::Addr<WebSocketSession>>,
 }
 
 impl GameManager {
@@ -71,16 +76,22 @@ impl GameManager {
         self.invites.retain(|x| !x.is_expired());
     }
 
+    pub fn manage_games(&mut self, self_ref: Arc<RwLock<GameManager>>) {
+        self.self_ref = Some(self_ref);
+    }
+
     pub fn create_game(&mut self, white_player: UserInfo, black_player: UserInfo) -> Option<&mut Game> {
         if self.get_game(white_player.id).is_some() || self.get_game(black_player.id).is_some() {
             return None;
         }
 
-        let game = Game {
+        let mut game = Game {
             white_player,
             black_player,
             chess_game: ChessGame::new(),
         };
+        game.chess_game.manager = self.self_ref.clone();
+        GameManager::notify_about(&mut self.web_sockets, &game);
 
         self.games.push(game);
 
@@ -111,6 +122,34 @@ impl GameManager {
 
         len != self.invites.len()
     }
+
+    pub fn register_socket(&mut self, socket: actix::Addr<WebSocketSession>) {
+        self.web_sockets.push(socket);
+    }
+
+    pub fn unregister_socket(&mut self, socket: actix::Addr<WebSocketSession>) {
+        self.web_sockets.retain(|other| *other != socket);
+    }
+
+    pub fn notify_change(&mut self) {
+        for game in self.games.iter_mut() {
+            if !game.chess_game.get_and_clear_dirty_state() {
+                continue;
+            }
+
+            GameManager::notify_about(&mut self.web_sockets, game);
+        }
+    }
+
+    fn notify_about(sockets: &mut Vec<actix::Addr<WebSocketSession>>, game: &Game) {
+        let message = UpdateGameStateMessage {
+            viewer_list: vec![game.white_player.id, game.black_player.id],
+        };
+
+        for socket in sockets.iter_mut() {
+            let _ = socket.try_send(message.clone());
+        }
+    }
 }
 
 impl Default for GameManager {
@@ -118,6 +157,8 @@ impl Default for GameManager {
         Self {
             games: Vec::new(),
             invites: Vec::new(),
+            self_ref: None,
+            web_sockets: Vec::new(),
         }
     }
 }
