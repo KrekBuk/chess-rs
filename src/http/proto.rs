@@ -3,13 +3,13 @@ use serde_json::Value;
 use serenity::async_trait;
 use tokio::sync::RwLockWriteGuard;
 
-use crate::chess::board::{Color, Square};
+use crate::chess::board::Color;
 use crate::chess::pieces::Type;
 use crate::http::http_server::UserInfo;
 use crate::system::game::{Game, GameManager};
 
 use crate::chess::game::{Game as ChessGame, GameResult};
-use crate::chess::moves::{Extra, NewMove};
+use crate::chess::moves::NewMove;
 use ProcessingError::*;
 
 use std::str::FromStr;
@@ -144,13 +144,6 @@ pub fn make_state(user: &UserInfo, game: &Option<&mut Game>) -> String {
     serde_json::to_string_pretty(&state).unwrap()
 }
 
-fn parse_square(value: Option<&Value>) -> Result<Square, ProcessingError> {
-    value
-        .and_then(|v| v.as_str())
-        .ok_or(ProcessingError::InvalidProtocol)
-        .and_then(|v| Square::from_str(v).map_err(|_| ProcessingError::InvalidProtocol))
-}
-
 fn map_colors_to_ids(game: &Game, colors: &Vec<Color>) -> Vec<String> {
     colors.iter().map(|color| game.get_player_id_by_side(*color).to_string()).collect()
 }
@@ -161,15 +154,13 @@ fn handle_make_move(user: &UserInfo, value: &Value, game: Option<&mut Game>) -> 
         return Err(OldState);
     }
 
-    // TODO: Extra
-    let from = parse_square(value.get("from"))?;
-    let to = parse_square(value.get("to"))?;
+    let new_move = value
+        .get("move")
+        .and_then(|v| v.as_str())
+        .ok_or(ProcessingError::InvalidProtocol)
+        .and_then(|v| NewMove::from_str(v).map_err(|_| ProcessingError::InvalidProtocol))?;
 
-    let _ = game.chess_game.make_move(NewMove {
-        from,
-        to,
-        extra: Extra::Promotion(Type::Queen),
-    });
+    let _ = game.chess_game.make_move(new_move);
 
     Ok(())
 }
