@@ -14,7 +14,7 @@ use crate::chess::game::GameResult;
 use crate::chess::moves::NewMove;
 use crate::discord::bot::BotData;
 use crate::http::http_server::UserInfo;
-use crate::system::game::Game;
+use crate::system::game::GameAnnouncer;
 
 #[derive(Error, Debug)]
 enum CommandError {
@@ -107,13 +107,12 @@ async fn accept(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     game_manager.remove_invite(msg.author.id, mention);
 
     let game = game_manager
-        .create_game(UserInfo::from(&other_user), UserInfo::from(&msg.author))
+        .create_game(UserInfo::from(&other_user), UserInfo::from(&msg.author), Some(GameAnnouncer::new(ctx.http.clone(), msg.channel_id)))
         .ok_or(GeneralError::FailedToCreateGame)?;
 
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("{}, {}, the game has started! \nYou can play at {}", msg.author.id.mention(), mention.mention(), data.play_url),
     )
@@ -159,7 +158,6 @@ async fn draw(ctx: &Context, msg: &Message) -> CommandResult {
             send_board(
                 ctx,
                 msg.channel_id,
-                game,
                 &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
                 format!("{} and {} agreed to a draw.", msg.author.id.mention(), other_player.mention()),
             )
@@ -193,7 +191,6 @@ async fn resign(ctx: &Context, msg: &Message, _args: Args) -> CommandResult {
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("{} resigned. ", msg.author.id.mention()),
     )
@@ -230,7 +227,6 @@ pub async fn make_move(ctx: &Context, msg: &Message, mut args: Args) -> CommandR
     send_board(
         &ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("Your move {}", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
     )
@@ -261,7 +257,7 @@ async fn board(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
         }
     };
 
-    send_board(ctx, msg.channel_id, game, &data.visualizer.visualize(&game.chess_game.state.board).unwrap(), String::from("")).await?;
+    send_board(ctx, msg.channel_id, &data.visualizer.visualize(&game.chess_game.state.board).unwrap(), String::from("")).await?;
 
     Ok(())
 }
@@ -284,7 +280,6 @@ async fn takeback(ctx: &Context, msg: &Message) -> CommandResult {
         send_board(
             ctx,
             msg.channel_id,
-            game,
             &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
             format!("Takeback accepted. Your move {}.", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
         )
@@ -301,26 +296,11 @@ async fn takeback(ctx: &Context, msg: &Message) -> CommandResult {
     Ok(())
 }
 
-pub async fn send_board(ctx: &Context, channel: ChannelId, game: &Game, vec: &[u8], header: String) -> Result<Message> {
+pub async fn send_board(ctx: &Context, channel: ChannelId, vec: &[u8], header: String) -> Result<Message> {
     channel
         .send_files(&ctx, std::iter::once(AttachmentType::from((vec, "board.png"))), |f| {
             let mut content = String::new();
             content.push_str(&header);
-
-            if let Some(result) = game.chess_game.result {
-                content.push_str("The game has concluded.\n");
-                content.push_str(&result.pretty_message());
-                content.push('\n');
-
-                if let Some(winner) = result.get_winner() {
-                    content.push_str("Winner: ");
-                    content.push_str(&game.get_player_id_by_side(winner).mention());
-                    content.push_str(". Loser: ");
-                    content.push_str(&game.get_player_id_by_side(winner.get_opposite()).mention());
-                } else {
-                    content.push_str("The game was drawn. ");
-                }
-            }
 
             f.content(content);
             f

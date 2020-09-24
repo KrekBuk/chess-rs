@@ -8,9 +8,11 @@ use serenity::model::misc::Mentionable;
 use serenity::prelude::Context;
 
 use super::GeneralError;
+use crate::chess::moves::NewMove;
 use crate::discord::bot::BotData;
 use crate::discord::commands::game::send_board;
-use crate::{chess::moves::NewMove, http::http_server::UserInfo};
+use crate::http::http_server::UserInfo;
+use crate::system::game::GameAnnouncer;
 
 #[derive(Error, Debug)]
 pub enum AdminCommandError {
@@ -41,11 +43,13 @@ async fn start(ctx: &Context, msg: &Message, mut args: Args) -> CommandResult {
     let data = data.get_mut::<BotData>().unwrap();
     let mut game_manager = data.game_manager.write().await;
 
-    let game = game_manager.create_game(UserInfo::from(&white), UserInfo::from(&black)).ok_or(GeneralError::FailedToCreateGame)?;
+    let game = game_manager
+        .create_game(UserInfo::from(&white), UserInfo::from(&black), Some(GameAnnouncer::new(ctx.http.clone(), msg.channel_id)))
+        .ok_or(GeneralError::FailedToCreateGame)?;
+
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("{}, {}, the game has started! \nYou can play at {}", white, black, data.play_url),
     )
@@ -71,7 +75,6 @@ async fn force_resign(ctx: &Context, msg: &Message, mut args: Args) -> CommandRe
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         String::from("The game was forcefully resigned. "),
     )
@@ -97,7 +100,6 @@ async fn force_draw(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         String::from("The game was forcefully drawn. "),
     )
@@ -122,7 +124,6 @@ async fn force_takeback(ctx: &Context, msg: &Message, mut args: Args) -> Command
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("The move was taken back. Your turn {} ", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
     )
@@ -148,7 +149,6 @@ async fn force_move(ctx: &Context, msg: &Message, mut args: Args) -> CommandResu
     send_board(
         ctx,
         msg.channel_id,
-        game,
         &data.visualizer.visualize(&game.chess_game.state.board).unwrap(),
         format!("Your move {}", game.get_player_id_by_side(game.chess_game.state.current_turn).mention()),
     )

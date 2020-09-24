@@ -9,6 +9,7 @@ use crate::system::game::GameManager;
 
 use super::proto::{Handler, ProcessingError};
 
+use crate::http::proto::make_state;
 use serenity::model::id::UserId;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -62,7 +63,7 @@ impl WebSocketSession {
         });
     }
 
-    pub async fn handle_packet(&mut self, text: String) -> Result<String, ProcessingError> {
+    pub async fn handle_packet(&mut self, text: String) -> Result<Option<String>, ProcessingError> {
         <Self as Handler>::handle(self, text).await
     }
 
@@ -73,12 +74,15 @@ impl WebSocketSession {
     fn do_handle_packet(&mut self, text: String, ctx: &mut <WebSocketSession as Actor>::Context) {
         match futures::executor::block_on(self.handle_packet(text)) {
             Ok(str) => {
-                ctx.text(str);
+                if let Some(str) = str {
+                    ctx.text(str);
+                }
             }
             Err(e) => match e {
                 ProcessingError::InvalidProtocol => {
                     ctx.close(Some(CloseReason::from(CloseCode::Unsupported)));
                 }
+                ProcessingError::OldState => {}
                 ProcessingError::NoOutput => {}
             },
         }
@@ -183,13 +187,14 @@ impl ActixHandler<UpdateGameStateMessage> for WebSocketSession {
             }
         }
 
-        static FAKE_PACKET: &str = "{\"type\":\"get_state\"}";
-
-        if self.info.is_none() {
-            ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
-            return;
+        match &self.info {
+            Some(info) => {
+                let mut game_manager = self.block_for_manager();
+                ctx.text(make_state(&info, &game_manager.get_game(info.id)));
+            }
+            None => {
+                ctx.close(Some(CloseReason::from(CloseCode::from(4000))));
+            }
         }
-
-        self.do_handle_packet(String::from(FAKE_PACKET), ctx);
     }
 }

@@ -3,14 +3,12 @@ use serde_json::Value;
 use serenity::async_trait;
 use tokio::sync::RwLockWriteGuard;
 
-use crate::system::game::GameManager;
-
 use crate::chess::board::{Color, Square};
 use crate::chess::pieces::Type;
 use crate::http::http_server::UserInfo;
-use crate::system::game::Game;
+use crate::system::game::{Game, GameManager};
 
-use crate::chess::game::GameResult;
+use crate::chess::game::{Game as ChessGame, GameResult};
 use crate::chess::moves::{Extra, NewMove};
 use ProcessingError::*;
 
@@ -31,6 +29,8 @@ pub struct GameState {
     pub result: Option<GameResult>,
     pub winner: Option<Color>,
     pub highlighted_squares: Vec<String>,
+    pub draw_offers: Vec<String>,
+    pub takeback_offers: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -45,6 +45,7 @@ pub struct PieceInfo {
 pub enum ProcessingError {
     NoOutput,
     InvalidProtocol,
+    OldState,
 }
 
 fn make_game_state(current_player: &UserInfo, game: &Game) -> GameState {
@@ -85,15 +86,18 @@ fn make_game_state(current_player: &UserInfo, game: &Game) -> GameState {
         result: game.chess_game.result,
         winner: game.chess_game.result.and_then(|result| result.get_winner()),
         highlighted_squares: game.chess_game.state.board.highlighted_squares.iter().map(|square| square.to_string()).collect(),
+        draw_offers: map_colors_to_ids(game, &game.chess_game.state.draw_offers),
+        takeback_offers: map_colors_to_ids(game, &game.chess_game.state.takeback_offers),
     }
 }
+
 #[async_trait]
 pub trait Handler {
     async fn fetch_user_info(&mut self) -> UserInfo;
 
     async fn get_game_manager(&mut self) -> RwLockWriteGuard<GameManager>;
 
-    async fn handle(&mut self, text: String) -> Result<String, ProcessingError> {
+    async fn handle(&mut self, text: String) -> Result<Option<String>, ProcessingError> {
         let value: Value = match serde_json::from_str(&text) {
             Ok(val) => val,
             Err(_) => {
@@ -103,28 +107,41 @@ pub trait Handler {
 
         let user = self.fetch_user_info().await;
         let mut game_manager = self.get_game_manager().await;
-        let mut game = game_manager.get_game(user.id);
+        let game = game_manager.get_game(user.id);
 
         let packet_type = value.get("type").and_then(|v| v.as_str());
         if let Some(packet_type) = packet_type {
             match packet_type {
-                "get_state" => {}
+                "get_state" => return Ok(Some(make_state(&user, &game))),
                 "make_move" => {
-                    handle_make_move(&user, &value, &mut game)?;
+                    handle_make_move(&user, &value, game)?;
+                }
+                "offer_draw" => {
+                    handle_simple_function(&user, game, ChessGame::offer_draw)?;
+                }
+                "offer_takeback" => {
+                    handle_simple_function(&user, game, ChessGame::offer_takeback)?;
+                }
+                "resign" => {
+                    handle_simple_function(&user, game, ChessGame::resign)?;
                 }
                 _ => return Err(InvalidProtocol),
             };
 
-            let state = State {
-                user: user.clone(),
-                game: game.map(|game| make_game_state(&user, game)),
-            };
-
-            Ok(serde_json::to_string_pretty(&state).unwrap())
+            Ok(None)
         } else {
             Err(InvalidProtocol)
         }
     }
+}
+
+pub fn make_state(user: &UserInfo, game: &Option<&mut Game>) -> String {
+    let state = State {
+        user: user.clone(),
+        game: game.as_ref().map(|game| make_game_state(&user, game)),
+    };
+
+    serde_json::to_string_pretty(&state).unwrap()
 }
 
 fn parse_square(value: Option<&Value>) -> Result<Square, ProcessingError> {
@@ -134,25 +151,36 @@ fn parse_square(value: Option<&Value>) -> Result<Square, ProcessingError> {
         .and_then(|v| Square::from_str(v).map_err(|_| ProcessingError::InvalidProtocol))
 }
 
-fn handle_make_move(user: &UserInfo, value: &Value, game: &mut Option<&mut Game>) -> Result<(), ProcessingError> {
-    match game {
-        Some(game) => {
-            if game.get_player_id_by_side(game.chess_game.state.current_turn) != user.id {
-                return Ok(());
-            }
+fn map_colors_to_ids(game: &Game, colors: &Vec<Color>) -> Vec<String> {
+    colors.iter().map(|color| game.get_player_id_by_side(*color).to_string()).collect()
+}
 
-            // TODO: Extra
-            let from = parse_square(value.get("from"))?;
-            let to = parse_square(value.get("to"))?;
-
-            let _ = game.chess_game.make_move(NewMove {
-                from,
-                to,
-                extra: Extra::Promotion(Type::Queen),
-            });
-
-            Ok(())
-        }
-        None => Ok(()),
+fn handle_make_move(user: &UserInfo, value: &Value, game: Option<&mut Game>) -> Result<(), ProcessingError> {
+    let game = game.ok_or(OldState)?;
+    if game.get_player_id_by_side(game.chess_game.state.current_turn) != user.id {
+        return Err(OldState);
     }
+
+    // TODO: Extra
+    let from = parse_square(value.get("from"))?;
+    let to = parse_square(value.get("to"))?;
+
+    let _ = game.chess_game.make_move(NewMove {
+        from,
+        to,
+        extra: Extra::Promotion(Type::Queen),
+    });
+
+    Ok(())
+}
+
+fn handle_simple_function<'a, F, R>(user: &UserInfo, game: Option<&'a mut Game>, function: F) -> Result<(), ProcessingError>
+where
+    F: FnOnce(&'a mut ChessGame, Color) -> R,
+{
+    let game = game.ok_or(OldState)?;
+    let color = game.get_side_of_player(user.id).ok_or(OldState)?;
+    function(&mut game.chess_game, color);
+
+    Ok(())
 }

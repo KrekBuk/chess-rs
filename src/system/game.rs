@@ -1,7 +1,10 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use serenity::model::id::UserId;
+use serenity::http::Http;
+use serenity::model::channel::Message;
+use serenity::model::id::{ChannelId, UserId};
+use serenity::model::misc::Mentionable;
 use tokio::sync::RwLock;
 
 use crate::chess::board::Color;
@@ -15,6 +18,7 @@ pub struct Game {
     pub white_player: UserInfo,
     pub black_player: UserInfo,
     pub chess_game: ChessGame,
+    pub announcer: Option<GameAnnouncer>,
 }
 
 impl Game {
@@ -80,7 +84,7 @@ impl GameManager {
         self.self_ref = Some(self_ref);
     }
 
-    pub fn create_game(&mut self, white_player: UserInfo, black_player: UserInfo) -> Option<&mut Game> {
+    pub fn create_game(&mut self, white_player: UserInfo, black_player: UserInfo, announcer: Option<GameAnnouncer>) -> Option<&mut Game> {
         if self.get_game(white_player.id).is_some() || self.get_game(black_player.id).is_some() {
             return None;
         }
@@ -89,6 +93,7 @@ impl GameManager {
             white_player,
             black_player,
             chess_game: ChessGame::new(),
+            announcer,
         };
         game.chess_game.manager = self.self_ref.clone();
         GameManager::notify_about(&mut self.web_sockets, &game);
@@ -138,6 +143,19 @@ impl GameManager {
             }
 
             GameManager::notify_about(&mut self.web_sockets, game);
+
+            if let Some(announcer) = &game.announcer {
+                let mut announcement = String::new();
+                announcer.create_annoucement(game, &mut announcement);
+
+                if !announcement.is_empty() {
+                    let announcer = announcer.clone();
+
+                    tokio::spawn(async move {
+                        let _ = announcer.announce(announcement).await;
+                    });
+                }
+            }
         }
     }
 
@@ -160,5 +178,43 @@ impl Default for GameManager {
             self_ref: None,
             web_sockets: Vec::new(),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct GameAnnouncer {
+    pub id: ChannelId,
+    ctx: Arc<Http>,
+}
+
+impl GameAnnouncer {
+    pub fn new(ctx: Arc<Http>, id: ChannelId) -> Self {
+        Self { id, ctx }
+    }
+
+    pub fn create_annoucement(&self, game: &Game, message: &mut String) {
+        if let Some(result) = game.chess_game.result {
+            message.push_str("The game has concluded.\n");
+            message.push_str(&result.pretty_message());
+            message.push('\n');
+
+            if let Some(winner) = result.get_winner() {
+                message.push_str("Winner: ");
+                message.push_str(&game.get_player_id_by_side(winner).mention());
+                message.push_str(". Loser: ");
+                message.push_str(&game.get_player_id_by_side(winner.get_opposite()).mention());
+            } else {
+                message.push_str("The game was drawn. ");
+            }
+        }
+    }
+
+    pub async fn announce(&self, str: String) -> serenity::Result<Message> {
+        self.id
+            .send_message(&self.ctx, |f| {
+                f.content(str);
+                f
+            })
+            .await
     }
 }
