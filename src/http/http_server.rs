@@ -9,7 +9,8 @@ use oauth2::basic::BasicClient;
 use oauth2::http::{self, HeaderMap, Method};
 use oauth2::reqwest::async_http_client;
 use oauth2::url::Url;
-use oauth2::{AccessToken, AsyncCodeTokenRequest, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, Scope, TokenResponse, TokenUrl};
+use oauth2::RequestTokenError;
+use oauth2::{AccessToken, AsyncCodeTokenRequest, AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, RedirectUrl, Scope, TokenResponse, TokenUrl};
 use serde::{Deserialize, Serialize};
 use serenity::model::id::UserId;
 use tokio::sync::RwLock;
@@ -37,7 +38,8 @@ pub async fn start_server(http_config: HttpConfig, oauth2_config: OAuth2Config, 
             Some(ClientSecret::new(oauth2_config.client_secret.clone())),
             AuthUrl::new(String::from("https://discord.com/api/oauth2/authorize")).unwrap(),
             Some(TokenUrl::new(String::from("https://discord.com/api/oauth2/token")).unwrap()),
-        );
+        )
+        .set_redirect_url(RedirectUrl::new(oauth2_config.redirect_url.clone()).unwrap());
 
         let (auth_url, _) = client.authorize_url(CsrfToken::new_random).add_scope(Scope::new(String::from("identify"))).url();
 
@@ -92,7 +94,14 @@ async fn auth(session: Session, data: web::Data<AppState>, params: web::Query<Au
     let token = data.oauth2_client.exchange_code(code).request_async(async_http_client).await;
     let token = match &token {
         Ok(token) => token,
-        Err(_) => return HttpResponse::Forbidden().body("Invalid token"),
+        Err(e) => {
+            let error = match e {
+                RequestTokenError::ServerResponse(e) => format!("Invalid server response: {}", e),
+                _ => format!("Invalid token: {}", e),
+            };
+
+            return HttpResponse::Forbidden().body(error);
+        }
     };
 
     let user_info = read_user(token.access_token()).await;
