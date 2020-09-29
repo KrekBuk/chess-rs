@@ -7,6 +7,7 @@ impl From<&User> for UserInfo {
             id: user.id,
             discriminator: user.discriminator.to_string(),
             username: user.name.clone(),
+            avatar: user.avatar.clone(),
         }
     }
 }

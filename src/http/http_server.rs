@@ -116,6 +116,7 @@ pub struct UserInfo {
     pub id: UserId,
     pub username: String,
     pub discriminator: String,
+    pub avatar: Option<String>,
 }
 
 async fn read_user(access_token: &AccessToken) -> UserInfo {

@@ -22,8 +22,8 @@ pub struct State {
 
 #[derive(Serialize, Deserialize)]
 pub struct GameState {
-    pub white: UserInfo,
-    pub black: UserInfo,
+    pub white: PublicUserInfo,
+    pub black: PublicUserInfo,
     pub current_turn: Color,
     pub pieces: Vec<PieceInfo>,
     pub result: Option<GameResult>,
@@ -42,6 +42,25 @@ pub struct PieceInfo {
     pub valid_moves: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PublicUserInfo {
+    pub id: String,
+    pub username: String,
+    pub discriminator: String,
+    pub avatar: Option<String>,
+}
+
+impl From<&UserInfo> for PublicUserInfo {
+    fn from(user: &UserInfo) -> Self {
+        PublicUserInfo {
+            id: user.id.to_string(),
+            discriminator: user.discriminator.clone(),
+            username: user.username.clone(),
+            avatar: user.avatar.clone(),
+        }
+    }
+}
+
 pub enum ProcessingError {
     NoOutput,
     InvalidProtocol,
@@ -53,8 +72,8 @@ fn make_game_state(current_player: &UserInfo, game: &Game) -> GameState {
     let our_turn = game.get_player_id_by_side(turn) == current_player.id;
 
     GameState {
-        white: game.white_player.clone(),
-        black: game.black_player.clone(),
+        white: PublicUserInfo::from(&game.white_player),
+        black: PublicUserInfo::from(&game.black_player),
         current_turn: turn,
         pieces: game
             .chess_game
